@@ -91,25 +91,28 @@ WITH ly(p12,ls,lf,s7,f7) AS (VALUES
 , ( 9, 'a'  , 'a'  , 5, 5)
 , (10, 'ais', 'bes', 5, 6)
 , (11, 'b'  , 'b'  , 6, 6)
-), a AS (
+), a1 AS (
   SELECT
-    CASE WHEN sharp THEN n1.ls ELSE n1.lf END AS letter
-  , CASE WHEN sharp THEN n1.s7 ELSE n1.f7 END + (this_pitch / 12) * 7
+    CASE WHEN sharp THEN ls ELSE lf END AS letter
+  , CASE WHEN sharp THEN s7 ELSE f7 END + ((this_pitch + 12) / 12) * 7
     AS this_note
-  , CASE WHEN sharp THEN n0.s7 ELSE n0.f7 END + (prev_pitch / 12) * 7
+  FROM ly
+  WHERE p12 = (this_pitch + 12) % 12
+), a2 AS (
+  SELECT
+    CASE WHEN sharp THEN s7 ELSE f7 END + ((prev_pitch + 12) / 12) * 7
     AS prev_note
-  FROM ly AS n1
-  CROSS JOIN ly AS n0
-  WHERE n1.p12 = this_pitch % 12
-    AND n0.p12 = prev_pitch % 12
+  FROM ly
+  WHERE p12 = (prev_pitch + 12) % 12
 )
 SELECT CASE
+--WHEN true THEN format('%s%s [%s:%s]', letter, suffix, this_pitch, prev_pitch)
 WHEN this_note - prev_note >  3
-THEN pitch2ly(this_pitch - 12, prev_pitch, sharp, suffix || '''')
+THEN pitch2ly(this_pitch, prev_pitch + 12, sharp, suffix || '''')
 WHEN this_note - prev_note < -3
 THEN pitch2ly(this_pitch + 12, prev_pitch, sharp, suffix || ',')
-ELSE letter || suffix END
-FROM a
+ELSE format ('%s%s', COALESCE(letter,'?'), suffix) END
+FROM a1 FULL OUTER JOIN a2 ON true
 $BODY$;
 
 CREATE FUNCTION ticks2ly(int)
@@ -124,9 +127,9 @@ SELECT
   WHEN  96 THEN '16'
   --
   WHEN 576 THEN '4.'
-  WHEN 288 THEN  '8.'
+  WHEN 288 THEN '8.'
   --
-  WHEN 672 THEN  '4..'
+  WHEN 672 THEN '4..'
   --
   ELSE format('ERROR(%s)', $1)
   END
@@ -143,7 +146,7 @@ LANGUAGE SQL
 AS $BODY$
 SELECT
 CASE
-WHEN this_ticks = prev_ticks THEN letter
+  WHEN this_ticks = prev_ticks THEN letter
 ELSE
   CASE this_ticks
 
@@ -176,7 +179,6 @@ RETURNS text
 LANGUAGE plpgsql
 AS $BODY$
 DECLARE
---  a int[] := frase_ffunc(s);
   n0 int := a.initial_pitch;
   d0 int := a.ticks[1];
   n1 int := n0;
@@ -442,6 +444,7 @@ SELECT bwv
 , voice
 , pitch - 60 AS pitch
 , t
+, d
 , bar
 , round(pos, 3) AS pos
 FROM notes NATURAL JOIN metadata, dm(t, tempo1, tempo2) AS f(bar, pos)

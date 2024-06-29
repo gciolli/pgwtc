@@ -1,6 +1,15 @@
 # Overview
 
+# Quickstart
 
+Issue `make` to build the `notes.csv` file from the 48 Lilypond source
+files.
+
+Then run
+
+    psql -f runme.sql
+
+to run a basic analysis.
 
 # Sources
 

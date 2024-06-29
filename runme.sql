@@ -3,24 +3,22 @@
 
 BEGIN;
 
-\ir tools.sql
-
-\q
+\ir lib/tools.sql
 
 -- 3. Analysis
 
 WITH a AS (
   SELECT *
-  , #- frase(pitch,t,d) OVER w AS f
-  FROM notes NATURAL JOIN metadata
-  WHERE bwv = 871
+  , #- frase(pitch,t,d) OVER w AS frase
+  FROM wtc
+  WHERE BWV = 871
   WINDOW w AS (
-    PARTITION BY bwv, voice
+    PARTITION BY BWV, voice
     ORDER BY t
-    RANGE BETWEEN 384*4 PRECEDING AND CURRENT ROW
+    RANGE BETWEEN 4 * 384 PRECEDING AND CURRENT ROW
   )
 )
-SELECT *
+SELECT bar, pos, frase
 FROM a
 WHERE voice = 2
 ORDER BY t;

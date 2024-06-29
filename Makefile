@@ -3,7 +3,10 @@ SRC2=$(patsubst ly/%.ly, tmp/%.ly, $(SRC1))
 SRC3=$(patsubst ly/%.ly, tmp/midi-%.ly, $(SRC1))
 MIDs=$(patsubst ly/%.ly, tmp/midi-%.mid, $(SRC1))
 
-target: $(MIDs)
+target: notes.csv
+
+notes.csv: $(MIDs)
+	psql -f lib/extract.sql
 
 tmp/%.mid : tmp/%.ly
 	lilypond -o tmp/ $<
