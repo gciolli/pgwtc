@@ -2,14 +2,91 @@
 -- 1. Tools
 --
 
--- 1a. generic
+
+-- 1a. Generic
 
 CREATE AGGREGATE gcd (int)
 ( STYPE = int
 , SFUNC = gcd
 );
 
--- 1b. The "frase" data type
+
+-- 1b. Mapping semitones to notes in a given key
+--
+-- We represent each key with the number of alterations, with sharp
+-- positive and flat negative, and we map each key to its seven notes,
+-- as follows:
+--
+--   ...
+--  -1 = F major = D minor = {0,2,4,5,7,9,10}
+--   0 = C major = A minor = {0,2,4,5,7,9,11}
+--   1 = G major = E minor = {0,2,4,6,7,9,11}
+--   ...
+--
+-- We consider notes as integers between 0 and 11, so our 12 keys
+-- range from Gb (excluded) to F# (included).
+
+CREATE TABLE claves
+( alterations int PRIMARY KEY
+, notes int[]
+);
+
+COPY claves FROM stdin;
+-5	{ 0,1,3,5,6, 8,10}
+-4	{ 0,1,3,5,7, 8,10}
+-3	{ 0,2,3,5,7, 8,10}
+-2	{ 0,2,3,5,7, 9,10}
+-1	{ 0,2,4,5,7, 9,10}
+0	{ 0,2,4,5,7, 9,11}
+1	{ 0,2,4,6,7, 9,11}
+2	{ 1,2,4,6,7, 9,11}
+3	{ 1,2,4,6,8, 9,11}
+4	{ 1,3,4,6,8, 9,11}
+5	{ 1,3,4,6,8,10,11}
+6	{ 1,3,5,6,8,10,11}
+\.
+
+-- Then we mapping semitones to notes in a given key, where semitones
+-- not in the scale are represented by 0.5 plus the note for the
+-- semitone below, as in this C major example:
+--
+-- 60 = 35
+-- 61 = 35.5
+-- 62 = 36
+-- 63 = 36.5
+-- 64 = 37
+-- 65 = 38
+-- 66 = 38.5
+-- 67 = 39
+--   ...
+
+CREATE FUNCTION note
+( IN semitone int
+, IN clavis int
+, OUT note numeric
+) LANGUAGE SQL
+AS $BODY$
+  WITH a AS (
+    SELECT h, n1 - 1 AS n
+    FROM claves c
+    , unnest(c.notes) WITH ORDINALITY AS f(h, n1)
+    WHERE c.alterations = $2
+  ), b(h, note) AS (
+    SELECT h, (semitone / 12) * 7 + n
+    FROM a
+    WHERE semitone % 12 = h
+  UNION
+    SELECT h, (semitone / 12) * 7 + n + 0.5
+    FROM a
+    WHERE semitone % 12 = h + 1
+  )
+  SELECT note
+  FROM b
+  ORDER BY h DESC LIMIT 1
+$BODY$;
+
+
+-- 1d. The "frase" data type
 
 --
 -- A "frase" is a sequence of notes. The pitches are stored as an
@@ -217,6 +294,38 @@ CREATE OPERATOR #-
 ( RIGHTARG = frase
 , FUNCTION = frase2ly_flat
 );
+
+CREATE FUNCTION frase_dist(a frase, b frase)
+RETURNS float
+LANGUAGE plpgsql
+AS $BODY$
+BEGIN
+  RAISE INFO 'a: %', a;
+  RAISE INFO 'b: %', b;
+  RAISE EXCEPTION 'TODO';
+  RETURN NULL;
+END;
+$BODY$;
+
+CREATE FUNCTION frase_transpose_tonal(f frase, n int)
+RETURNS frase
+LANGUAGE plpgsql
+AS $BODY$
+BEGIN
+  f.initial_pitch := f.initial_pitch + n;  
+  RETURN f;
+END;
+$BODY$;
+
+CREATE FUNCTION frase_transpose_modal(f frase, n int)
+RETURNS frase
+LANGUAGE plpgsql
+AS $BODY$
+BEGIN
+  f.initial_pitch := f.initial_pitch + n;  
+  RETURN f;
+END;
+$BODY$;
 
 --
 -- 2. Data load and cleaning
