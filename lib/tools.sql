@@ -1,150 +1,302 @@
 --
--- 1. Tools
+-- 1. Generic tools
 --
-
-
--- 1a. Generic
 
 CREATE AGGREGATE gcd (int)
 ( STYPE = int
 , SFUNC = gcd
 );
 
+--
+-- 2. The "clavis" data type
+--
 
--- 1b. Mapping semitones to notes in a given key
---
--- We represent each key with the number of alterations, with sharp
--- positive and flat negative, and we map each key to its seven notes,
--- as follows:
---
---   ...
---  -1 = F major = D minor = {0,2,4,5,7,9,10}
---   0 = C major = A minor = {0,2,4,5,7,9,11}
---   1 = G major = E minor = {0,2,4,6,7,9,11}
---   ...
---
--- We consider notes as integers between 0 and 11, so our 12 keys
--- range from Gb (excluded) to F# (included).
-
-CREATE TABLE claves
-( alterations int PRIMARY KEY
-, notes int[]
+CREATE TYPE clavis AS ENUM
+( 'C'
+, 'Cm'
+, 'C#'
+, 'Db'
+, 'C#m'
+, 'D'
+, 'Dm'
+, 'Eb'
+, 'D#m'
+, 'Ebm'
+, 'E'
+, 'Em'
+, 'F'
+, 'Fm'
+, 'F#'
+, 'Gb'
+, 'F#m'
+, 'G'
+, 'Gm'
+, 'Ab'
+, 'G#m'
+, 'A'
+, 'Am'
+, 'Bb'
+, 'Bbm'
+, 'B'
+, 'Bm'
 );
 
-COPY claves FROM stdin;
--5	{ 0,1,3,5,6, 8,10}
--4	{ 0,1,3,5,7, 8,10}
--3	{ 0,2,3,5,7, 8,10}
--2	{ 0,2,3,5,7, 9,10}
--1	{ 0,2,4,5,7, 9,10}
-0	{ 0,2,4,5,7, 9,11}
-1	{ 0,2,4,6,7, 9,11}
-2	{ 1,2,4,6,7, 9,11}
-3	{ 1,2,4,6,8, 9,11}
-4	{ 1,3,4,6,8, 9,11}
-5	{ 1,3,4,6,8,10,11}
-6	{ 1,3,5,6,8,10,11}
+--
+-- 3. Metadata
+--
+
+-- We record metadata that we do not detect. This includes, for each
+-- fugue, the tempo signature and the clavis.
+
+CREATE TYPE tempo AS
+( num int
+, den int
+);
+
+CREATE TEMP TABLE metadata
+( bwv int
+, clavis clavis
+, tempo text NOT NULL
+, gcd int
+, PRIMARY KEY (bwv)
+);
+
+COPY metadata (bwv, clavis, tempo) FROM stdin;
+846	C	4/4
+847	Cm	4/4
+848	C#	4/4
+849	C#m	2/2
+850	D	4/4
+851	Dm	3/4
+852	Eb	4/4
+853	D#m	4/4
+854	E	4/4
+855	Em	3/4
+856	F	3/8
+857	Fm	4/4
+858	F#	4/4
+859	F#m	6/4
+860	G	6/8
+861	Gm	4/4
+862	Ab	4/4
+863	G#m	4/4
+864	A	9/8
+865	Am	4/4
+866	Bb	3/4
+867	Bbm	2/2
+868	B	4/4
+869	Bm	4/4
+870	C	2/4
+871	Cm	4/4
+872	C#	4/4
+873	C#m	12/16
+874	D	2/2
+875	Dm	4/4
+876	Eb	2/2
+877	D#m	4/4
+878	E	2/1
+879	Em	2/2
+880	F	6/16
+881	Fm	2/4
+882	F#	2/2
+883	F#m	4/4
+884	G	3/8
+885	Gm	3/4
+886	Ab	4/4
+887	G#m	6/8
+888	A	4/4
+889	Am	4/4
+890	Bb	3/4
+891	Bbm	3/2
+892	B	2/2
+893	Bm	3/8
 \.
 
--- Then we mapping semitones to notes in a given key, where semitones
--- not in the scale are represented by 0.5 plus the note for the
--- semitone below, as in this C major example:
---
--- 60 = 35
--- 61 = 35.5
--- 62 = 36
--- 63 = 36.5
--- 64 = 37
--- 65 = 38
--- 66 = 38.5
--- 67 = 39
---   ...
-
-CREATE FUNCTION note
-( IN semitone int
-, IN clavis int
-, OUT note numeric
-) LANGUAGE SQL
+CREATE FUNCTION tempo(text)
+RETURNS tempo
+LANGUAGE SQL
 AS $BODY$
-  WITH a AS (
-    SELECT h, n1 - 1 AS n
-    FROM claves c
-    , unnest(c.notes) WITH ORDINALITY AS f(h, n1)
-    WHERE c.alterations = $2
-  ), b(h, note) AS (
-    SELECT h, (semitone / 12) * 7 + n
-    FROM a
-    WHERE semitone % 12 = h
-  UNION
-    SELECT h, (semitone / 12) * 7 + n + 0.5
-    FROM a
-    WHERE semitone % 12 = h + 1
-  )
-  SELECT note
-  FROM b
-  ORDER BY h DESC LIMIT 1
+SELECT ROW(a[1], a[2]) :: tempo
+FROM regexp_match($1, '^([0-9]+)/([0-9]+)$') AS f(a)
 $BODY$;
 
-
--- 1d. The "frase" data type
+ALTER TABLE metadata
+ALTER COLUMN tempo TYPE tempo USING tempo(tempo);
 
 --
--- A "frase" is a sequence of notes. The pitches are stored as an
--- initial pitch, followed by an array of relative pitch differences,
--- and by an array of durations in ticks. A difference is NULL if it
--- means a pause.
+-- 4. Clavis algebra
 --
 
-CREATE TYPE frase AS
-( initial_pitch int
-, pitch_deltas int[]
-, ticks int[]
+-- We record, for each clavis, the smallest positive offset in
+-- semitones that eliminates alterations. This could be computed, but
+-- it is easier to just record it as given metadata.
+
+CREATE TEMP TABLE clavis_metadata
+( id clavis PRIMARY KEY
+, maior boolean NOT NULL
+, diesis boolean NOT NULL
+, o int NOT NULL
+);
+
+COPY clavis_metadata FROM stdin;
+C	t	t	0
+Db	t	f	1
+C#	t	t	1
+D	t	t	2
+Eb	t	f	3
+E	t	t	4
+F	t	f	5
+F#	t	t	6
+Gb	t	f	6
+G	t	t	7
+Ab	t	f	8
+A	t	t	9
+Bb	t	f	10
+B	t	t	11
+Cm	f	f	3
+C#m	f	t	4
+Dm	f	f	5
+D#m	f	t	6
+Ebm	f	f	6
+Em	f	t	7
+Fm	f	f	8
+F#m	f	t	9
+Gm	f	f	10
+G#m	f	t	11
+Am	f	t	0
+Bbm	f	f	1
+Bm	f	t	2
+\.
+
+CREATE FUNCTION spatium_clavium (a clavis, b clavis)
+RETURNS int
+LANGUAGE SQL
+AS $BODY$
+SELECT ma.o - mb.o
+FROM clavis_metadata AS ma, clavis_metadata AS mb
+WHERE ma.id = a AND mb.id = b
+$BODY$;
+
+CREATE OPERATOR -
+( LEFTARG = clavis
+, RIGHTARG = clavis
+, FUNCTION = spatium_clavium
 );
 
 --
--- The "frase" aggregate function takes a set of ordered notes (p,t,d)
--- and returns the corresponding frase.
+-- 5. The "locutio" data type
 --
 
-CREATE FUNCTION frase_sfunc(s int[], p int, t int, d int)
-RETURNS int[]
-LANGUAGE plpgsql
-AS $BODY$
-BEGIN
-  RETURN COALESCE (s, '{}') || ARRAY[ARRAY[p,t,d]];
-END;
-$BODY$;
+-- A locutio is a sequence of notes in a given clavis. Originally
+-- notes are triplets (pitch, time, duration); in the locutio we
+-- record the time of the first note as "t" and then we store the
+-- times of each note as relative offsets to the time of the first
+-- note. The clavis can be added later with a dedicated operator.
 
-CREATE FUNCTION frase_ffunc(s int[])
-RETURNS frase
-LANGUAGE plpgsql
+CREATE TYPE locutio AS
+( c clavis
+, t int
+, ps int[]
+, ts int[]
+, ds int[]
+);
+
+-- The "locutio" aggregate function takes a set of ordered notes
+-- (p,t,d) and returns the corresponding locutio.
+
+CREATE FUNCTION locutio_sfunc
+( o INOUT locutio
+, p IN int
+, t IN int
+, d IN int
+) LANGUAGE plpgsql
 AS $BODY$
 DECLARE
   n int;
-  o frase;
+  pause int;
 BEGIN
-  -- n-th note: ARRAY[s[n][1], s[n][2], s[n][3]] = (p,t,d)
-  o.initial_pitch := s[1][1];
-  o.pitch_deltas := '{}';
-  o.ticks := ARRAY[s[1][3]];
-  FOR n IN 2..array_length(s,1) LOOP
-    o.pitch_deltas := o.pitch_deltas || (s[n][1] - s[n-1][1]);
-    o.ticks := o.ticks || s[n][3];
-    -- TODO: consider pauses
-  END LOOP;
-  RAISE DEBUG E'\n';
-  RETURN o;
+  IF o IS NULL THEN
+    o.t := t;
+    o.ps := ARRAY[p];
+    o.ts := ARRAY[t];
+    o.ds := ARRAY[d];
+  ELSE
+    n := array_length(o.ps,1);
+    pause := t - o.ts[n] - o.ds[n];
+    IF pause > 0 THEN
+      -- pause, i.e. the next note starts after the end of the
+      -- previous one
+      o.ps := o.ps || ARRAY[NULL :: int];
+      o.ts := o.ts || (t - pause);
+      o.ds := o.ds || pause;
+    END IF;
+    o.ps := o.ps || p;
+    o.ts := o.ts || t;
+    o.ds := o.ds || d;
+  END IF;
+  RAISE DEBUG E'sfunc\n%\n%\n%\n', o.ps, o.ts, o.ds;
 END;
 $BODY$;
 
-CREATE AGGREGATE frase (p int, t int, d int)
-( STYPE = int[]
-, SFUNC = frase_sfunc
-, FINALFUNC = frase_ffunc
+CREATE AGGREGATE locutio (p int, t int, d int)
+( STYPE = locutio
+, SFUNC = locutio_sfunc
 );
 
 --
--- Operators #+ and #- for frase visualization.
+-- 6. Adding clavis to locutio
+--
+
+-- This function adds a clavis to a locutio that doesn't have one, or
+-- transposes a locutio that has a clavis to another clavis.
+
+CREATE FUNCTION locutio_clavis
+( o INOUT locutio
+, c clavis
+) LANGUAGE plpgsql
+AS $BODY$
+DECLARE
+  d int;
+BEGIN
+  IF o.c IS NULL THEN
+    o.c := c;
+  ELSE
+    d := c - o.c;
+    SELECT array_agg(p + d ORDER BY n)
+    INTO o.ps
+    FROM unnest(o.ps)
+    WITH ORDINALITY AS f(p, n);
+    o.c := c;
+  END IF;
+END;
+$BODY$;
+
+CREATE OPERATOR @
+( LEFTARG = locutio
+, RIGHTARG = clavis
+, FUNCTION = locutio_clavis
+);
+
+--
+-- 7. Converting (ticks, tempo) to (bar, pos)
+--
+
+-- Function that converts the duration in ticks into a more readable
+-- pair composed by the bar number and the position within the bar.
+
+CREATE FUNCTION bar_pos
+( IN ticks int
+, IN tempo tempo
+, OUT bar int
+, OUT pos numeric
+) LANGUAGE SQL
+AS $$
+SELECT 1 + floor (CAST (ticks AS numeric) * tempo.den / tempo.num / 1536)
+, CAST (mod (ticks + 1536 * tempo.num / tempo.den, 1536 * tempo.num / tempo.den) AS numeric) / 1536 * tempo.den
+$$;
+
+--
+-- 8. Operator # for locutio visualization.
 --
 
 CREATE FUNCTION pitch2ly
@@ -174,7 +326,7 @@ WITH ly(p12,ls,lf,s7,f7) AS (VALUES
   , CASE WHEN sharp THEN s7 ELSE f7 END + ((this_pitch + 12) / 12) * 7
     AS this_note
   FROM ly
-  WHERE p12 = (this_pitch + 12) % 12
+  WHERE p12 = (this_pitch + 12) % 12 OR this_pitch IS NULL
 ), a2 AS (
   SELECT
     CASE WHEN sharp THEN s7 ELSE f7 END + ((prev_pitch + 12) / 12) * 7
@@ -183,7 +335,7 @@ WITH ly(p12,ls,lf,s7,f7) AS (VALUES
   WHERE p12 = (prev_pitch + 12) % 12
 )
 SELECT CASE
---WHEN true THEN format('%s%s [%s:%s]', letter, suffix, this_pitch, prev_pitch)
+WHEN this_pitch IS NULL THEN 'r'
 WHEN this_note - prev_note >  3
 THEN pitch2ly(this_pitch, prev_pitch + 12, sharp, suffix || '''')
 WHEN this_note - prev_note < -3
@@ -244,6 +396,7 @@ ELSE
     WHEN 288 THEN  '8.'
     --
     WHEN 672 THEN  '4..'
+    WHEN 1344 THEN  '2..'
     ELSE format('(TODO %s)', this_ticks)
     END)
   END
@@ -251,51 +404,65 @@ END
 FROM pitch2ly(this_pitch, prev_pitch, sharp, '') AS f(letter)
 $BODY$;
 
-CREATE FUNCTION frase2ly(a frase, sharp boolean)
+-- TODO: the bar is inserted at the first gap when the bar changes,
+-- which is inaccurate as it doesn't split notes which cross a bar.
+
+CREATE FUNCTION locutio2ly(l locutio, tempo tempo)
 RETURNS text
 LANGUAGE plpgsql
 AS $BODY$
 DECLARE
-  n0 int := a.initial_pitch;
-  d0 int := a.ticks[1];
-  n1 int := n0;
+  p0 int := l.ps[1];
+  t  int := l.ts[1];
+  d0 int := l.ds[1];
+  bar0 int;
+  pos0 int;
+  bar1 int;
+  pos1 int;
+  p1 int := p0;
   d1 int := NULL;
-  x text := pd2ly(n0, n1, d0, d1, sharp);
+  sharp boolean;
+  x text;
 BEGIN
-  IF array_length(a.ticks,1) > 1 THEN
-    FOR n IN 2..array_length(a.ticks,1) LOOP
-      n1 := n0;
-      n0 := n0 + a.pitch_deltas[n-1];
+  SELECT diesis INTO STRICT sharp
+  FROM clavis_metadata
+  WHERE id = l.c;
+  SELECT * INTO STRICT bar0, pos0
+  FROM bar_pos(t, tempo);
+  x := format('| [%s/%s] %s', tempo.num, tempo.den
+       , pd2ly(p0, p1, d0, d1, sharp));
+  IF array_length(l.ds,1) > 1 THEN
+    FOR n IN 2..array_length(l.ds,1) LOOP
+      p1 := COALESCE(p0,p1);
       d1 := d0;
-      d0 := a.ticks[n];
-      x := format('%s %s', x, pd2ly(n0, n1, d0, d1, sharp));
+      bar1 := bar0;
+      pos1 := pos0;
+      t  := t + d1;
+      SELECT * INTO STRICT bar0, pos0
+      FROM bar_pos(t, tempo);
+      p0 := l.ps[n];
+      d0 := l.ds[n];
+      x := format('%s%s%s', x
+      , CASE WHEN bar1 = bar0
+      THEN ' ' ELSE E'\n| ' END
+      , pd2ly(p0, p1, d0, d1, sharp));
     END LOOP;
   END IF;
   RETURN x;
 END;
 $BODY$;
 
-CREATE FUNCTION frase2ly_sharp(a frase)
-RETURNS text
-LANGUAGE SQL
-AS 'SELECT frase2ly($1,true)';
-
-CREATE FUNCTION frase2ly_flat(a frase)
-RETURNS text
-LANGUAGE SQL
-AS 'SELECT frase2ly($1,false)';
-
-CREATE OPERATOR #+
-( RIGHTARG = frase
-, FUNCTION = frase2ly_sharp
+CREATE OPERATOR #
+( LEFTARG  = locutio
+, RIGHTARG = tempo
+, FUNCTION = locutio2ly
 );
 
-CREATE OPERATOR #-
-( RIGHTARG = frase
-, FUNCTION = frase2ly_flat
-);
+--
+-- 9. Comparing two locutiones
+--
 
-CREATE FUNCTION frase_dist(a frase, b frase)
+CREATE FUNCTION locutiones_dist(a locutio, b locutio)
 RETURNS float
 LANGUAGE plpgsql
 AS $BODY$
@@ -307,254 +474,22 @@ BEGIN
 END;
 $BODY$;
 
-CREATE FUNCTION frase_transpose_tonal(f frase, n int)
-RETURNS frase
-LANGUAGE plpgsql
-AS $BODY$
-BEGIN
-  f.initial_pitch := f.initial_pitch + n;  
-  RETURN f;
-END;
-$BODY$;
-
-CREATE FUNCTION frase_transpose_modal(f frase, n int)
-RETURNS frase
-LANGUAGE plpgsql
-AS $BODY$
-BEGIN
-  f.initial_pitch := f.initial_pitch + n;  
-  RETURN f;
-END;
-$BODY$;
-
---
--- 2. Data load and cleaning
---
-
--- 2a. Data load
-
-CREATE TEMP TABLE notes
-( bwv int
-, voice int
-, pitch int
-, t int
-, d int NOT NULL
-, CONSTRAINT notes_pk PRIMARY KEY (bwv, voice, t, pitch)
-);
-
-\copy notes FROM 'notes.csv' CSV HEADER
-
--- 2b. Add metadata
-
--- We record metadata that we do not detect. This includes the tempo
--- signature and whether the key is sharp.
-
-CREATE TEMP TABLE metadata
-( bwv int
-, tempo1 int NOT NULL
-, tempo2 int NOT NULL
-, sharp boolean NOT NULL
-, gcd int
-, PRIMARY KEY (bwv)
-);
-
-COMMENT ON COLUMN metadata.sharp IS
-'This column records whether the key has flats (e.g. C minor) or sharps
-(e.g. D major).';
-
--- TODO: inspect the scores and set the "sharp" column accordingly.
-
-COPY metadata (bwv, sharp, tempo1, tempo2) FROM stdin;
-846	t	4	4
-847	t	4	4
-848	t	4	4
-849	t	2	2
-850	t	4	4
-851	t	3	4
-852	t	4	4
-853	t	4	4
-854	t	4	4
-855	t	3	4
-856	t	3	8
-857	t	4	4
-858	t	4	4
-859	t	6	4
-860	t	6	8
-861	t	4	4
-862	t	4	4
-863	t	4	4
-864	t	9	8
-865	t	4	4
-866	t	3	4
-867	t	2	2
-868	t	4	4
-869	t	4	4
-870	t	2	4
-871	f	4	4
-872	t	4	4
-873	t	12	16
-874	t	2	2
-875	t	4	4
-876	t	2	2
-877	t	4	4
-878	t	2	1
-879	t	2	2
-880	t	6	16
-881	t	2	4
-882	t	2	2
-883	t	4	4
-884	t	3	8
-885	t	3	4
-886	t	4	4
-887	t	6	8
-888	t	4	4
-889	t	4	4
-890	t	3	4
-891	t	3	2
-892	t	2	2
-893	t	3	8
-\.
-
--- 2c. Correct anacrusis
-
---
--- Anacrusis (the \partial command in Lilypond) occurs in 5 of the 48
--- fugues, and is not preserved in the MIDI output. So we manually
--- restore the original note positions by moving the notes back for
--- the right amount of ticks.
---
-
-UPDATE notes SET t = t - 192 WHERE bwv IN (856, 881, 893);
-UPDATE notes SET t = t - 384 WHERE bwv = 879;
-UPDATE notes SET t = t - 768 WHERE bwv = 882;
-
--- 2d. Remove grace notes
-
---
--- Now we must undo the effects of grace notes, which are not
--- considered in this analysis.
---
--- There are seven grace notes here, either 1/8 or 1/16. After
--- inspecting the MIDI files, we found that a grace note of 1/8
--- causes:
---
--- 1.  the shortening of the previous note by 44
---
--- 2.  the insertion of an extra note of duration 43 ticks, starting
---     exactly at the end of the previous note
---
--- The grace note of 1/16 causes the same impact, except that the
--- numbers are respectively 22 and 21.
---
--- So our remedial actions would be to:
---
--- 1.  delete all grace notes (detected by the unusual lengths)
---
--- 2.  for each note ending at the start of a deleted grace note, add
---     1 + D to its duration, where D is the duration of the deleted
---     grace note.
---
-
-\qecho --
-\qecho -- Deleted grace notes
-\qecho --
-
-WITH deleted_graces AS (
-  DELETE FROM notes
-  WHERE d IN (21, 43)
-  RETURNING *
-)
-UPDATE notes n
-SET d = n.d + 1 + g.d
-FROM deleted_graces g
-WHERE (g.bwv, g.voice) = (n.bwv, n.voice)
-  AND g.t = n.t + n.d
-RETURNING
-  n.bwv
-, n.voice
-, n.pitch
-, n.t
-, n.d
-, g.t AS g_t
-, g.d AS g_d
-;
-
--- 2e. Remove chords
-
---
--- We also delete chords, because we are only interested in analysing
--- monophonic voices. In other words, we make the assumption that
--- chords only occur outside of counterpoint.
---
-
-WITH dups AS (
-  SELECT bwv, voice, t
-  , array_agg(pitch) AS pitches
-  FROM notes
-  GROUP BY bwv, voice, t
-  HAVING count(*) > 1
-)
-DELETE FROM notes
-USING dups
-WHERE dups.voice = notes.voice
-  AND dups.bwv   = notes.bwv
-  AND dups.t     = notes.t;
-
--- 2f. Detect note time resolution
-
-WITH a AS (
-  SELECT bwv, gcd(t) FROM notes GROUP BY bwv
-  UNION
-  SELECT bwv, gcd(d) FROM notes GROUP BY bwv
-)
-UPDATE metadata
-SET gcd = a.gcd
-FROM a
-WHERE metadata.bwv = a.bwv;
-
--- 2g. Assert expected note resolution
-
-DO $_$ BEGIN
-
-  ASSERT (
-    SELECT count(*) = 0
-    FROM metadata
-    WHERE gcd NOT IN (192, 96, 48, 32, 16)
-  );
-
-END; $_$ LANGUAGE plpgsql;
-
--- 2h. Readable view
-
---
--- Function that converts the duration in ticks into a more readable
--- pair composed by the bar number and the position within the bar.
---
-
-CREATE FUNCTION dm
-( IN ticks int
-, IN tempo1 int
-, IN tempo2 int
-, OUT bar int
-, OUT pos numeric
-) LANGUAGE SQL
-AS $$
-SELECT 1 + floor (CAST (ticks AS numeric) * tempo2 / tempo1 / 1536)
-, CAST (mod (ticks + 1536 * tempo1 / tempo2, 1536 * tempo1 / tempo2) AS numeric) / 1536 * tempo2
-$$;
-
---
--- View that exposes the notes in a readable format.
---
-
-CREATE VIEW wtc AS
-SELECT bwv
-, format('%s/%s', tempo1, tempo2) AS tempo
-, voice
-, pitch - 60 AS pitch
-, t
-, d
-, bar
-, round(pos, 3) AS pos
-FROM notes NATURAL JOIN metadata, dm(t, tempo1, tempo2) AS f(bar, pos)
-ORDER BY bwv, bar, pos, voice;
+--TODO	CREATE FUNCTION locutio_transpose_tonal(f locutio, n int)
+--TODO	RETURNS locutio
+--TODO	LANGUAGE plpgsql
+--TODO	AS $BODY$
+--TODO	BEGIN
+--TODO	  f.initial_pitch := f.initial_pitch + n;  
+--TODO	  RETURN f;
+--TODO	END;
+--TODO	$BODY$;
+--TODO	
+--TODO	CREATE FUNCTION locutio_transpose_modal(f locutio, n int)
+--TODO	RETURNS locutio
+--TODO	LANGUAGE plpgsql
+--TODO	AS $BODY$
+--TODO	BEGIN
+--TODO	  f.initial_pitch := f.initial_pitch + n;  
+--TODO	  RETURN f;
+--TODO	END;
+--TODO	$BODY$;
