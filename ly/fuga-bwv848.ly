@@ -29,7 +29,7 @@ soprano = \relative c'' {
   cis,8 cis'16 bis cis dis eis fis gis fisis eis fisis gis fis eis dis | % m. 3
   eis4~ eis16 dis cis eis dis cis bis dis cis bis cis ais | % m. 4
   \grace ais16 bis8 dis fis!2 eis4~ | % m. 5
-  eis4 dis~ dis8 cis bis dis~| % m. 6
+  eis4 dis~ dis8 cis bis dis~ | % m. 6
   dis8 gis, eis'4~ eis8 eis16 cis ais4~ | % m. 7
   ais8 ais dis4~ dis8 dis16 bis gis4~ | % m. 8
   gis8 gis cis4~ cis16 bis cis ais ais'4~ | % m. 9
@@ -94,7 +94,7 @@ alto = \relative c' {
  eis4 r8 gis cis4. cis16 ais | % m. 7
  dis,4 r8 fisis bis4. bis16 gis | % m. 8
  cis,4 r8 eis ais4~ ais16 cis dis ais | % m. 9
- bis4 r8 gis~ gis16 fisis eis fisis gis fis!eis dis | % m. 10
+ bis4 r8 gis~ gis16 fisis eis fisis gis fis! eis dis | % m. 10
  eis4~ eis16 dis cis eis dis cis bis dis cis bis cis ais | % m. 11
  bis8 dis gis4 r8 \clef bass b,!16 gis eis4 | % m. 12
  r8 eis16 gis b!4 ais8 b! ais cisis, | % m. 13

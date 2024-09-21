@@ -45,7 +45,7 @@ soprano = \relative c' {
   b4 c8 d g, c4 b8  | % m. 23
   c4 b8 bes a d4 c8  | % m. 24
   d8 e f4~ f16 a g f e f e d \noBreak | % m. 25
-  c2 r16 g32a b!16 c d e f8~ \noBreak | % m. 26
+  c2 r16 g32 a b!16 c d e f8~ \noBreak | % m. 26
   f32 c d e f16 g a8. b16 c2 \fermata \bar "|." | % m. 27
   
 }
@@ -111,7 +111,7 @@ tenor = \relative c {
   d4 e8 d~ d g, g4~ | % m. 23
   g8 c, d e f8. g32 f e8 a | % m. 24
   d,8 g~ g16 a g f e d e f g a bes g | % m. 25
-  a e f g a b! c a b2| % m. 26
+  a e f g a b! c a b2 | % m. 26
   c1 \fermata \bar "|." | % m. 27 
   
 }

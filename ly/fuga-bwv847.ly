@@ -61,7 +61,7 @@ alto = \relative c' {
   g,8 c16 b! c8 d f,16 g as4 g16 f | % m. 2
   es16 c' b! a! g f! es d c8 es' d c | % m. 3
   bes8 a! bes c fis, g a fis | % m. 4
-  g4 r16 c,d es f g as8~ as16 d, es f | % m. 5
+  g4 r16 c, d es f g as8~ as16 d, es f | % m. 5
   g16 a! bes8~ bes16 es, f g as g f es d8 c'16 b! | % m. 6
   c4 r r8 f es d | % m. 7
   r8 as g f g f16 es f8 d | % m. 8
