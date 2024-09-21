@@ -11,10 +11,10 @@ Add the `pgwtc` schema to your search path:
 Query some notes as in the following example:
 
     SELECT *
-	FROM wtc
-	WHERE BWV=871
-	AND voice=2
-	ORDER BY t LIMIT 9;
+    FROM wtc
+    WHERE BWV=871
+    AND voice=2
+    ORDER BY t LIMIT 9;
 
 You should get the following output:
 
