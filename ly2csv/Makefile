@@ -5,6 +5,9 @@ MIDs=$(patsubst ../ly/%.ly, tmp/midi-%.mid, $(SRC1))
 
 target: notes.csv
 
+clean:
+	rm -rf tmp/*
+
 notes.csv: $(MIDs)
 	psql -f extract.sql
 
