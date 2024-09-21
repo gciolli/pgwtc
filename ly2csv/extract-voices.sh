@@ -10,7 +10,7 @@ set -e
 f () {
     local if=$1
     local x=${if%.ly}
-    x=${x#ly/}
+    x=${x#../ly/}
     local opt=tmp/${x}-tmp
     local ov=tmp/${x}.ly
     echo
