@@ -39,6 +39,6 @@ FROM a
 WHERE v > 0 AND v1 = 0
 ORDER BY bwv, t, c;
 
-\copy (TABLE notes) TO 'tmp/notes.csv' CSV HEADER
+\copy (TABLE notes) TO 'tmp/pgwtc-notes.csv' CSV HEADER
 
 ROLLBACK;
