@@ -1,14 +1,12 @@
---
--- Table of contents:
---
--- 1. Generic tools
--- 2. The "clavis" data type
--- 3. Metadata and "tempo" function
---
-
+-- complain if script is sourced in psql, rather than via CREATE EXTENSION
+\echo Use "CREATE EXTENSION pgwtc" to load this file. \quit
 
 --
--- 1. Generic tools
+-- Chapter I. Creating database objects
+--
+
+--
+-- I.1 Generic objects
 --
 
 CREATE AGGREGATE gcd (int)
@@ -17,7 +15,7 @@ CREATE AGGREGATE gcd (int)
 );
 
 --
--- 2. The "clavis" data type
+-- I.2 The "clavis" data type
 --
 
 CREATE TYPE clavis AS ENUM
@@ -54,42 +52,14 @@ CREATE TYPE clavis AS ENUM
 -- semitones that eliminates alterations. This could be computed, but
 -- it is easier to just record it as given metadata.
 
-CREATE TEMP TABLE clavis_metadata
+CREATE UNLOGGED TABLE clavis_metadata
 ( id clavis PRIMARY KEY
 , maior boolean NOT NULL
 , diesis boolean NOT NULL
 , o int NOT NULL
 );
 
-COPY clavis_metadata FROM stdin;
-C	t	t	0
-Db	t	f	1
-C#	t	t	1
-D	t	t	2
-Eb	t	f	3
-E	t	t	4
-F	t	f	5
-F#	t	t	6
-Gb	t	f	6
-G	t	t	7
-Ab	t	f	8
-A	t	t	9
-Bb	t	f	10
-B	t	t	11
-Cm	f	f	3
-C#m	f	t	4
-Dm	f	f	5
-D#m	f	t	6
-Ebm	f	f	6
-Em	f	t	7
-Fm	f	f	8
-F#m	f	t	9
-Gm	f	f	10
-G#m	f	t	11
-Am	f	t	0
-Bbm	f	f	1
-Bm	f	t	2
-\.
+COPY clavis_metadata FROM '/usr/share/postgresql/16/extension/pgwtc-clavis-metadata.csv' CSV HEADER;
 
 CREATE FUNCTION spatium_clavium (a clavis, b clavis)
 RETURNS int
@@ -107,7 +77,7 @@ CREATE OPERATOR -
 );
 
 --
--- 3. The "tempo" data type
+-- I.3 The "tempo" data type
 --
 
 CREATE TYPE tempo AS
@@ -131,7 +101,7 @@ SELECT 1536 / ($1).den * ($1).num
 $BODY$;
 
 --
--- 5. The "locutio" data type
+-- I.4 The "locutio" data type
 --
 
 -- A locutio is a sequence of notes in a given clavis. Originally
@@ -191,7 +161,7 @@ CREATE AGGREGATE locutio (p int, t int, d int)
 );
 
 --
--- 6. Adding clavis to locutio
+-- I.5 Adding clavis to locutio
 --
 
 -- This function adds a clavis to a locutio that doesn't have one, or
@@ -225,7 +195,7 @@ CREATE OPERATOR @
 );
 
 --
--- 7. Converting (ticks, tempo) to (bar, pos)
+-- I.6 Converting (ticks, tempo) to (bar, pos)
 --
 
 -- Function that converts the duration in ticks into a more readable
@@ -243,7 +213,7 @@ SELECT 1 + floor (CAST (ticks AS numeric) * tempo.den / tempo.num / 1536)
 $$;
 
 --
--- 8. Visualizing ticks
+-- I.7 Visualizing ticks
 --
 
 CREATE FUNCTION ticks2ly(int)
@@ -277,7 +247,7 @@ $BODY$;
 -- We also need to split uncommon lengths.
 
 --
--- 9. Operator # for locutio visualization.
+-- I.8 Operator # for locutio visualization.
 --
 
 CREATE FUNCTION pitch2ly
@@ -419,7 +389,7 @@ CREATE OPERATOR #
 );
 
 --
--- 10. Comparing two locutiones
+-- I.9 Comparing two locutiones
 --
 
 CREATE FUNCTION locutiones_dist(a locutio, b locutio)
@@ -434,22 +404,194 @@ BEGIN
 END;
 $BODY$;
 
---TODO	CREATE FUNCTION locutio_transpose_tonal(f locutio, n int)
---TODO	RETURNS locutio
---TODO	LANGUAGE plpgsql
---TODO	AS $BODY$
---TODO	BEGIN
---TODO	  f.initial_pitch := f.initial_pitch + n;  
---TODO	  RETURN f;
---TODO	END;
---TODO	$BODY$;
---TODO	
---TODO	CREATE FUNCTION locutio_transpose_modal(f locutio, n int)
---TODO	RETURNS locutio
---TODO	LANGUAGE plpgsql
---TODO	AS $BODY$
---TODO	BEGIN
---TODO	  f.initial_pitch := f.initial_pitch + n;  
---TODO	  RETURN f;
---TODO	END;
---TODO	$BODY$;
+CREATE OPERATOR -
+( LEFTARG  = locutio
+, RIGHTARG = locutio
+, FUNCTION = locutiones_dist
+);
+
+--
+-- Chapter II. Loading notes from the Well Tempered Clavier
+--
+
+--
+-- First, we load the notes.csv file into the temporary "wtc_notes"
+-- table, and we create and fill the wtc_metadata table (step 1).
+--
+-- We then perform data cleaning (steps 2, 3, 4), extraction (step 5)
+-- and sanity checks (step 6).
+--
+-- Finally we expose the contents of wtc_notes and wtc_metadata in a
+-- more readable "wtc" view (step 7).
+--
+
+--
+-- II.1 Data load
+--
+
+CREATE TABLE wtc_notes
+( bwv int
+, voice int
+, pitch int
+, t int
+, d int NOT NULL
+, CONSTRAINT wtc_notes_pk PRIMARY KEY (bwv, voice, t, pitch)
+);
+
+COPY wtc_notes FROM '/usr/share/postgresql/16/extension/pgwtc-notes.csv' CSV HEADER;
+
+-- We populate the wtc_metadata table with some data that we do not
+-- extract from the source .ly files.
+
+CREATE TABLE wtc_metadata
+( bwv int
+, clavis clavis
+, tempo text NOT NULL
+, gcd int
+, PRIMARY KEY (bwv)
+);
+
+COPY wtc_metadata(bwv,clavis,tempo) FROM '/usr/share/postgresql/16/extension/pgwtc-metadata.csv' CSV HEADER;
+
+ALTER TABLE wtc_metadata
+ALTER COLUMN tempo TYPE tempo USING tempo(tempo);
+
+--
+-- II.2 Correct anacrusis
+--
+
+-- Anacrusis (the \partial command in Lilypond) occurs in 5 of the 48
+-- fugues, and is not preserved in the MIDI output. So we manually
+-- restore the original note positions by moving the notes back for
+-- the right amount of ticks.
+
+UPDATE wtc_notes SET t = t - 192 WHERE bwv IN (856, 881, 893);
+UPDATE wtc_notes SET t = t - 384 WHERE bwv = 879;
+UPDATE wtc_notes SET t = t - 768 WHERE bwv = 882;
+
+--
+-- II.3 Remove grace notes
+--
+
+-- We must undo the effects of grace notes, as they are not considered
+-- in this analysis, and would confuse it.
+--
+-- There are seven grace notes here, either 1/8 or 1/16. After
+-- inspecting the MIDI files, we found that a grace note of 1/8
+-- causes:
+--
+-- 1.  the shortening of the previous note by 44
+--
+-- 2.  the insertion of an extra note of duration 43 ticks, starting
+--     exactly at the end of the previous note
+--
+-- The grace note of 1/16 causes the same impact, except that the
+-- numbers are respectively 22 and 21.
+--
+-- So our remedial actions would be to:
+--
+-- 1.  delete all grace notes (detected by the unusual lengths)
+--
+-- 2.  for each note ending at the start of a deleted grace note, add
+--     1 + D to its duration, where D is the duration of the deleted
+--     grace note.
+
+CREATE TEMP TABLE wtc_grace_notes_deleted (LIKE wtc_notes);
+
+WITH deleted AS (
+  DELETE FROM wtc_notes
+  WHERE d IN (21, 43)
+  RETURNING *
+), debug AS (
+  INSERT INTO wtc_grace_notes_deleted
+  SELECT * FROM deleted
+)
+UPDATE wtc_notes n
+SET d = n.d + 1 + deleted.d
+FROM deleted
+WHERE (deleted.bwv, deleted.voice) = (n.bwv, n.voice)
+  AND deleted.t = n.t + n.d
+RETURNING
+  n.bwv
+, n.voice
+, n.pitch
+, n.t
+, n.d
+, deleted.t AS deleted_t
+, deleted.d AS deleted_d
+;
+
+--
+-- II.4 Remove chords
+--
+
+-- We also delete chords, because we are only interested in analysing
+-- monophonic voices. In other words, we make the assumption that
+-- chords only occur outside of counterpoint.
+
+WITH dups AS (
+  SELECT bwv, voice, t
+  , array_agg(pitch) AS pitches
+  FROM wtc_notes
+  GROUP BY bwv, voice, t
+  HAVING count(*) > 1
+)
+DELETE FROM wtc_notes
+USING dups
+WHERE dups.voice = wtc_notes.voice
+  AND dups.bwv   = wtc_notes.bwv
+  AND dups.t     = wtc_notes.t;
+
+--
+-- II.5 Compute notes resolution
+--
+
+WITH a AS (
+  SELECT bwv, gcd(t) FROM wtc_notes GROUP BY bwv
+  UNION
+  SELECT bwv, gcd(d) FROM wtc_notes GROUP BY bwv
+)
+UPDATE wtc_metadata
+SET gcd = a.gcd
+FROM a
+WHERE wtc_metadata.bwv = a.bwv;
+
+--
+-- II.6 Sanity checks
+--
+
+DO $_$ BEGIN
+
+  ASSERT (
+    SELECT count(*) = 0
+    FROM wtc_metadata
+    WHERE gcd NOT IN (192, 96, 48, 32, 16)
+  ), 'Unexpected note tick resolution';
+
+  ASSERT (
+    SELECT count(*) = 7
+    FROM wtc_grace_notes_deleted
+  ), 'Unexpected number of grace notes deleted';
+
+END; $_$ LANGUAGE plpgsql;
+
+DROP TABLE wtc_grace_notes_deleted;
+
+--
+-- II.7 Readable view
+--
+
+-- View that exposes notes and metadata in a readable format.
+
+CREATE VIEW wtc AS
+SELECT bwv
+, clavis
+, tempo
+, voice
+, pitch
+, t
+, d
+, bar
+, round(pos, 3) AS pos
+FROM wtc_notes NATURAL JOIN wtc_metadata, bar_pos(t, tempo) AS f(bar, pos)
+ORDER BY bwv, bar, pos, voice;
