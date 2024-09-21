@@ -1,4 +1,15 @@
 --
+-- First, we create a temporary "notes" table, and we load the
+-- notes.csv file into it (step 1).
+--
+-- We then perform some data cleaning (steps 2, 3, 4) and sanity
+-- checks (step 5).
+--
+-- Finally we expose the contents of the "notes" table in a more
+-- readable "wtc" view (step 6).
+--
+
+--
 -- 1. Data load
 --
 
@@ -99,7 +110,7 @@ WHERE dups.voice = notes.voice
   AND dups.t     = notes.t;
 
 --
--- 5. Detect and assert note time resolution
+-- 5. Assert tick resolution
 --
 
 WITH a AS (
@@ -133,10 +144,11 @@ SELECT bwv
 , clavis
 , tempo
 , voice
-, pitch - 60 AS pitch
+, pitch --- 60 AS pitch
 , t
 , d
 , bar
 , round(pos, 3) AS pos
 FROM notes NATURAL JOIN metadata, bar_pos(t, tempo) AS f(bar, pos)
 ORDER BY bwv, bar, pos, voice;
+

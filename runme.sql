@@ -6,16 +6,23 @@ BEGIN;
 \ir lib/tools.sql
 \ir lib/load.sql
 
+SELECT *
+FROM wtc
+WHERE BWV = 870
+AND voice = 4
+ORDER BY t LIMIT 10;
+\q
+
 -- 3. Analysis
 
 SELECT locutio(pitch,t,d ORDER BY t)
   @ clavis
---  @ clavis 'Am'
+  @ 'C'
   # tempo
 FROM wtc
-WHERE BWV = 871
-AND voice = 2
-GROUP BY bwv, clavis, tempo;
+WHERE BWV = 870 -- AND voice = 4
+GROUP BY bwv, voice, clavis, tempo
+ORDER BY bwv, voice;
 
 \q
 

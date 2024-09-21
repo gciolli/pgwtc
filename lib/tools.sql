@@ -1,4 +1,13 @@
 --
+-- Table of contents:
+--
+-- 1. Generic tools
+-- 2. The "clavis" data type
+-- 3. Metadata and "tempo" function
+--
+
+
+--
 -- 1. Generic tools
 --
 
@@ -40,92 +49,6 @@ CREATE TYPE clavis AS ENUM
 , 'B'
 , 'Bm'
 );
-
---
--- 3. Metadata
---
-
--- We record metadata that we do not detect. This includes, for each
--- fugue, the tempo signature and the clavis.
-
-CREATE TYPE tempo AS
-( num int
-, den int
-);
-
-CREATE TEMP TABLE metadata
-( bwv int
-, clavis clavis
-, tempo text NOT NULL
-, gcd int
-, PRIMARY KEY (bwv)
-);
-
-COPY metadata (bwv, clavis, tempo) FROM stdin;
-846	C	4/4
-847	Cm	4/4
-848	C#	4/4
-849	C#m	2/2
-850	D	4/4
-851	Dm	3/4
-852	Eb	4/4
-853	D#m	4/4
-854	E	4/4
-855	Em	3/4
-856	F	3/8
-857	Fm	4/4
-858	F#	4/4
-859	F#m	6/4
-860	G	6/8
-861	Gm	4/4
-862	Ab	4/4
-863	G#m	4/4
-864	A	9/8
-865	Am	4/4
-866	Bb	3/4
-867	Bbm	2/2
-868	B	4/4
-869	Bm	4/4
-870	C	2/4
-871	Cm	4/4
-872	C#	4/4
-873	C#m	12/16
-874	D	2/2
-875	Dm	4/4
-876	Eb	2/2
-877	D#m	4/4
-878	E	2/1
-879	Em	2/2
-880	F	6/16
-881	Fm	2/4
-882	F#	2/2
-883	F#m	4/4
-884	G	3/8
-885	Gm	3/4
-886	Ab	4/4
-887	G#m	6/8
-888	A	4/4
-889	Am	4/4
-890	Bb	3/4
-891	Bbm	3/2
-892	B	2/2
-893	Bm	3/8
-\.
-
-CREATE FUNCTION tempo(text)
-RETURNS tempo
-LANGUAGE SQL
-AS $BODY$
-SELECT ROW(a[1], a[2]) :: tempo
-FROM regexp_match($1, '^([0-9]+)/([0-9]+)$') AS f(a)
-$BODY$;
-
-ALTER TABLE metadata
-ALTER COLUMN tempo TYPE tempo USING tempo(tempo);
-
---
--- 4. Clavis algebra
---
 
 -- We record, for each clavis, the smallest positive offset in
 -- semitones that eliminates alterations. This could be computed, but
@@ -182,6 +105,100 @@ CREATE OPERATOR -
 , RIGHTARG = clavis
 , FUNCTION = spatium_clavium
 );
+
+--
+-- 3. The "tempo" data type
+--
+
+CREATE TYPE tempo AS
+( num int
+, den int
+);
+
+CREATE FUNCTION tempo(text)
+RETURNS tempo
+LANGUAGE SQL
+AS $BODY$
+SELECT ROW(a[1], a[2]) :: tempo
+FROM regexp_match($1, '^([0-9]+)/([0-9]+)$') AS f(a)
+$BODY$;
+
+CREATE FUNCTION tempo2ticks(tempo)
+RETURNS int
+LANGUAGE SQL
+AS $BODY$
+SELECT 1536 / ($1).den * ($1).num
+$BODY$;
+
+--
+-- 4. WTC Metadata
+--
+
+-- In the "wtc_metadata" table we record information that we do not
+-- extract from the .ly source files, such as the tempo signature and
+-- the clavis.
+
+CREATE TEMP TABLE wtc_metadata
+( bwv int
+, clavis clavis
+, tempo text NOT NULL
+, gcd int
+, PRIMARY KEY (bwv)
+);
+
+COPY wtc_metadata (bwv, clavis, tempo) FROM stdin;
+846	C	4/4
+847	Cm	4/4
+848	C#	4/4
+849	C#m	2/2
+850	D	4/4
+851	Dm	3/4
+852	Eb	4/4
+853	D#m	4/4
+854	E	4/4
+855	Em	3/4
+856	F	3/8
+857	Fm	4/4
+858	F#	4/4
+859	F#m	6/4
+860	G	6/8
+861	Gm	4/4
+862	Ab	4/4
+863	G#m	4/4
+864	A	9/8
+865	Am	4/4
+866	Bb	3/4
+867	Bbm	2/2
+868	B	4/4
+869	Bm	4/4
+870	C	2/4
+871	Cm	4/4
+872	C#	4/4
+873	C#m	12/16
+874	D	2/2
+875	Dm	4/4
+876	Eb	2/2
+877	D#m	4/4
+878	E	2/1
+879	Em	2/2
+880	F	6/16
+881	Fm	2/4
+882	F#	2/2
+883	F#m	4/4
+884	G	3/8
+885	Gm	3/4
+886	Ab	4/4
+887	G#m	6/8
+888	A	4/4
+889	Am	4/4
+890	Bb	3/4
+891	Bbm	3/2
+892	B	2/2
+893	Bm	3/8
+\.
+
+ALTER TABLE wtc_metadata
+ALTER COLUMN tempo TYPE tempo USING tempo(tempo);
 
 --
 -- 5. The "locutio" data type
@@ -296,7 +313,41 @@ SELECT 1 + floor (CAST (ticks AS numeric) * tempo.den / tempo.num / 1536)
 $$;
 
 --
--- 8. Operator # for locutio visualization.
+-- 8. Visualizing ticks
+--
+
+CREATE FUNCTION ticks2ly(int)
+RETURNS text
+LANGUAGE SQL
+AS $BODY$
+SELECT
+  CASE $1
+  WHEN 1536 THEN  '1'
+  WHEN  768 THEN  '2'
+  WHEN  384 THEN  '4'
+  WHEN  192 THEN  '8'
+  WHEN   96 THEN '16'
+  WHEN   48 THEN '32'
+  --
+  WHEN 2304 THEN  '1.'
+  WHEN 1152 THEN  '2.'
+  WHEN  576 THEN  '4.'
+  WHEN  288 THEN  '8.'
+  WHEN  144 THEN '16.'
+  --
+  WHEN 2688 THEN  '1..'
+  WHEN 1344 THEN  '2..'
+  WHEN  672 THEN  '4..'
+  WHEN  336 THEN  '8..'
+  --
+  ELSE format('ERROR(%s)', $1)
+  END
+$BODY$;
+
+-- We also need to split uncommon lengths.
+
+--
+-- 9. Operator # for locutio visualization.
 --
 
 CREATE FUNCTION pitch2ly
@@ -340,28 +391,10 @@ WHEN this_note - prev_note >  3
 THEN pitch2ly(this_pitch, prev_pitch + 12, sharp, suffix || '''')
 WHEN this_note - prev_note < -3
 THEN pitch2ly(this_pitch + 12, prev_pitch, sharp, suffix || ',')
-ELSE format ('%s%s', COALESCE(letter,'?'), suffix) END
+ELSE format ('%s%s'
+     , COALESCE(letter,format('??[%s-%s]??', prev_pitch, this_pitch))
+     , suffix) END
 FROM a1 FULL OUTER JOIN a2 ON true
-$BODY$;
-
-CREATE FUNCTION ticks2ly(int)
-RETURNS text
-LANGUAGE SQL
-AS $BODY$
-SELECT
-  CASE $1
-  WHEN 768 THEN  '2'
-  WHEN 384 THEN  '4'
-  WHEN 192 THEN  '8'
-  WHEN  96 THEN '16'
-  --
-  WHEN 576 THEN '4.'
-  WHEN 288 THEN '8.'
-  --
-  WHEN 672 THEN '4..'
-  --
-  ELSE format('ERROR(%s)', $1)
-  END
 $BODY$;
 
 CREATE FUNCTION pd2ly
@@ -381,24 +414,19 @@ ELSE
 
   -- Certain durations cannot be expressed with a single note, so they
   -- require a tie of multiple notes
-  WHEN 480 THEN format
-    ( '%s%s ~ %s%s', letter, ticks2ly(384), letter, ticks2ly(96))
+  WHEN  480 THEN format
+    ( '%s%s ~ %s%s', letter, ticks2ly( 384), letter, ticks2ly( 96))
+  WHEN  864 THEN format
+    ( '%s%s ~ %s%s', letter, ticks2ly( 768), letter, ticks2ly( 96))
+  WHEN 1632 THEN format
+    ( '%s%s ~ %s%s', letter, ticks2ly(1536), letter, ticks2ly( 96))
+  WHEN  960 THEN format
+    ( '%s%s ~ %s%s', letter, ticks2ly( 768), letter, ticks2ly(192))
+  WHEN 2496 THEN format
+    ( '%s%s ~ %s%s', letter, ticks2ly(2304), letter, ticks2ly(192))
 
   -- Here we map all the remaining durations to Lilypond notation
-  ELSE format('%s%s', letter,
-    CASE this_ticks
-    WHEN 768 THEN  '2'
-    WHEN 384 THEN  '4'
-    WHEN 192 THEN  '8'
-    WHEN  96 THEN '16'
-    --
-    WHEN 576 THEN  '4.'
-    WHEN 288 THEN  '8.'
-    --
-    WHEN 672 THEN  '4..'
-    WHEN 1344 THEN  '2..'
-    ELSE format('(TODO %s)', this_ticks)
-    END)
+  ELSE format('%s%s', letter, ticks2ly(this_ticks))
   END
 END
 FROM pitch2ly(this_pitch, prev_pitch, sharp, '') AS f(letter)
@@ -406,6 +434,8 @@ $BODY$;
 
 -- TODO: the bar is inserted at the first gap when the bar changes,
 -- which is inaccurate as it doesn't split notes which cross a bar.
+
+-- TODO: rests do not need to be tied.
 
 CREATE FUNCTION locutio2ly(l locutio, tempo tempo)
 RETURNS text
@@ -429,7 +459,7 @@ BEGIN
   WHERE id = l.c;
   SELECT * INTO STRICT bar0, pos0
   FROM bar_pos(t, tempo);
-  x := format('| [%s/%s] %s', tempo.num, tempo.den
+  x := format('%2s | \time %s/%s %s', bar0, tempo.num, tempo.den
        , pd2ly(p0, p1, d0, d1, sharp));
   IF array_length(l.ds,1) > 1 THEN
     FOR n IN 2..array_length(l.ds,1) LOOP
@@ -444,7 +474,7 @@ BEGIN
       d0 := l.ds[n];
       x := format('%s%s%s', x
       , CASE WHEN bar1 = bar0
-      THEN ' ' ELSE E'\n| ' END
+      THEN ' ' ELSE format(E'\n%2s | ', bar0) END
       , pd2ly(p0, p1, d0, d1, sharp));
     END LOOP;
   END IF;
@@ -459,7 +489,7 @@ CREATE OPERATOR #
 );
 
 --
--- 9. Comparing two locutiones
+-- 10. Comparing two locutiones
 --
 
 CREATE FUNCTION locutiones_dist(a locutio, b locutio)
