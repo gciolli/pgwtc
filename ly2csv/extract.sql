@@ -8,7 +8,7 @@ CREATE TEMP TABLE events
 , v int
 );
 
-\copy events FROM PROGRAM 'bash lib/midi2pg.sh tmp/*.midi'
+\copy events FROM PROGRAM 'bash midi2pg.sh tmp/*.midi'
 
 SELECT count(*) FROM events;
 

@@ -6,13 +6,13 @@ MIDs=$(patsubst ly/%.ly, tmp/midi-%.mid, $(SRC1))
 target: notes.csv
 
 notes.csv: $(MIDs)
-	psql -f lib/extract.sql
+	psql -f extract.sql
 
 tmp/%.mid : tmp/%.ly
 	lilypond -o tmp/ $<
 
 tmp/midi-%.ly : tmp/%.ly
-	bash lib/build-midis.sh $< >$@
+	bash build-midis.sh $< >$@
 
 tmp/%.ly : ly/%.ly
-	bash lib/extract-voices.sh $<
+	bash extract-voices.sh $<

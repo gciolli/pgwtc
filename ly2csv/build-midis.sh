@@ -15,7 +15,7 @@ $(cat $if)
 \\score {
   <<
 EOF
-    sed -nf lib/build-midis.sed $if
+    sed -nf build-midis.sed $if
     cat <<EOF
   >>
   \\midi {}
