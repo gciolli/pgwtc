@@ -59,7 +59,7 @@ CREATE UNLOGGED TABLE clavis_metadata
 , o int NOT NULL
 );
 
-COPY clavis_metadata FROM '/usr/share/postgresql/16/extension/pgwtc-clavis-metadata.csv' CSV HEADER;
+COPY clavis_metadata FROM '/usr/share/postgresql/17/extension/pgwtc-clavis-metadata.csv' CSV HEADER;
 
 CREATE FUNCTION spatium_clavium (a clavis, b clavis)
 RETURNS int
@@ -98,6 +98,15 @@ RETURNS int
 LANGUAGE SQL
 AS $BODY$
 SELECT 1536 / ($1).den * ($1).num
+$BODY$;
+
+CREATE FUNCTION tempo2beats(tempo)
+RETURNS int
+LANGUAGE SQL
+AS $BODY$
+SELECT CASE (($1).den, ($1).num)
+WHEN (4,4) THEN 4
+END
 $BODY$;
 
 --
@@ -195,25 +204,44 @@ CREATE OPERATOR @
 );
 
 --
--- I.6 Converting (ticks, tempo) to (bar, pos)
+-- I.6 Visualizing ticks
 --
 
--- Function that converts the duration in ticks into a more readable
--- pair composed by the bar number and the position within the bar.
-
-CREATE FUNCTION bar_pos
-( IN ticks int
-, IN tempo tempo
-, OUT bar int
-, OUT pos numeric
-) LANGUAGE SQL
-AS $$
-SELECT 1 + floor (CAST (ticks AS numeric) * tempo.den / tempo.num / 1536)
-, CAST (mod (ticks + 1536 * tempo.num / tempo.den, 1536 * tempo.num / tempo.den) AS numeric) / 1536 * tempo.den
-$$;
+-- While we work on the logic, we temporarily redefine the tempo2ticks
+-- function to use a simpler resolution, as it is easier to work with
+-- smaller numbers. We will switch back to the original resolution
+-- once the logic is final.
+--
+-- A common MIDI file resolution is that a crotchet note 𝅘𝅥 is divided
+-- in 384 ticks. Hence:
+--
+-- a. its subdivisions 𝅘𝅥𝅮, 𝅘𝅥𝅯, 𝅘𝅥𝅰, 𝅘𝅥𝅱 and 𝅘𝅥𝅲 are composed, respectively, by
+--    192, 96, 48, 24 and 12 ticks;
+--
+-- b. triplets made with 𝅘𝅥𝅮, 𝅘𝅥𝅯, 𝅘𝅥𝅰, 𝅘𝅥𝅱 and 𝅘𝅥𝅲 are composed, respectively,
+--    by 128, 64, 32, 16 and 8 ticks;
+--
+-- c. a semibreve note 𝅝 is composed by 1536 ticks.
+--
+-- Our simplification will be that one tick is one semiquaver; hence
+-- 4/4 is composed by 16 ticks.
 
 --
--- I.7 Visualizing ticks
+-- This function defines the resolution, by expressing the number of
+-- ticks in the tempo.
+--
+
+CREATE OR REPLACE FUNCTION tempo2ticks(tempo)
+RETURNS int
+LANGUAGE SQL
+AS $BODY$ SELECT
+--1536 -- 4/4 = 1536
+16 -- 4/4 = 16, simplification
+/ ($1).den * ($1).num $BODY$;
+
+--
+-- This function converts a number of ticks into a Lilypond duration
+-- notation.
 --
 
 CREATE FUNCTION ticks2ly(int)
@@ -221,19 +249,22 @@ RETURNS text
 LANGUAGE SQL
 AS $BODY$
 SELECT
-  CASE $1
+  CASE $1 * 1536 / tempo2ticks('4/4')
   WHEN 1536 THEN  '1'
   WHEN  768 THEN  '2'
   WHEN  384 THEN  '4'
   WHEN  192 THEN  '8'
   WHEN   96 THEN '16'
   WHEN   48 THEN '32'
+  WHEN   24 THEN '64'
   --
   WHEN 2304 THEN  '1.'
   WHEN 1152 THEN  '2.'
   WHEN  576 THEN  '4.'
   WHEN  288 THEN  '8.'
   WHEN  144 THEN '16.'
+  WHEN   72 THEN '32.'
+  WHEN   36 THEN '64.'
   --
   WHEN 2688 THEN  '1..'
   WHEN 1344 THEN  '2..'
@@ -244,10 +275,133 @@ SELECT
   END
 $BODY$;
 
--- We also need to split uncommon lengths.
+--
+-- The bar2ly function returns the Lilypond expansion of a note (t,d)
+-- which is contained in a single bar, i.e. such that o + d <= bar,
+-- where t = b + o, 0 <= o < bar and b % bar = 0.
+--
+
+CREATE FUNCTION bar2ly
+( t IN int
+, d IN int
+, tempo IN tempo
+, ds OUT int[]
+) LANGUAGE plpgsql
+AS $BODY$
+DECLARE
+  ts int[];
+  bar int;
+  x int;
+BEGIN
+  --
+  -- (2) Split each bar in 2, 3 or 4 beats, according to the tempo
+  --
+  NULL;
+  --
+  -- (3) Split each beat in 2 or 3 sub-beats, depending on the tempo
+  --
+  NULL;
+  --
+  -- (4) Split each sub-beat in 2, recursively.
+  --
+  NULL;
+END;
+$BODY$;
 
 --
--- I.8 Operator # for locutio visualization.
+-- The td2ly function returns the Lilypond expansion of a note (t,d).
+--
+
+CREATE FUNCTION td2ly
+( t IN int
+, d IN int
+, tempo IN tempo
+, ds OUT int[]
+) LANGUAGE plpgsql
+AS $BODY$
+DECLARE
+  ts int[];
+  bar int;
+  x int;
+BEGIN
+  RAISE DEBUG 'td2ly: %,% @ %', t, d, tempo;
+  ds := '{}';
+  ts := '{}';
+  bar := tempo2ticks(tempo);
+  RAISE DEBUG 'tempo, bar: %, %', tempo, bar;
+  --
+  -- (1) Split (t,d) at bar boundaries
+  --
+  LOOP
+    RAISE DEBUG 'CP10 t,d = %,%', t, d;
+    RAISE DEBUG 'CP11 t,bar,d = %,%,%', t, bar, d;
+    EXIT WHEN t % bar + d <= bar;
+    x := (bar - t % bar);
+    RAISE DEBUG 'CP20 x = %', x;
+    ts := ts || t;
+    ds := ds || x;
+    t := t + x;
+    d := d - x;
+  END LOOP;
+  RAISE DEBUG 'CP30 t,d = %,%', t, d;
+  ts := ts || t;
+  ds := ds || d;
+  RAISE DEBUG 'td2ly => %, %', ts, ds;
+END;
+$BODY$;
+
+--
+-- The tt2ly function returns the Lilypond expansion of a note (t,d)
+-- using a different format: the input is (t1, t2) = (t, t + d) and
+-- the output is
+--
+-- (t, t + d1, t + d_1, ..., t + d_1 + ... + d_k)
+--
+
+CREATE OR REPLACE FUNCTION tt2ly
+( t1 int
+, t2 int
+, tempo tempo
+) RETURNS TABLE
+( t int
+, t2 int
+, o int
+, d int
+) LANGUAGE SQL
+AS $$
+WITH metadata(bar, beat) AS ( SELECT
+  tempo2ticks(tempo)
+, tempo2beats(tempo)
+), a(t) AS (VALUES (t1), (t2)), 
+--
+-- (1) Split (t,d) at bar boundaries
+--
+b(t) AS (
+  SELECT t
+  FROM metadata
+  , generate_series(t1 - t1 % bar + bar, t2 - t2 % bar, bar) AS f(t)
+UNION ALL
+  TABLE a
+),
+--
+-- (2) Compute offset and duration
+--
+c AS (
+  SELECT t
+  , lead(t,1) OVER w AS t2
+  , t % bar AS o
+  , lead(t,1) OVER w - t AS d
+  FROM b, metadata
+  WINDOW w AS (ORDER BY t)
+)
+SELECT t,t2,o,d
+FROM c
+--WHERE d IS NOT NULL
+ORDER BY t
+$$;
+
+--
+-- I.7 Operator # for locutio visualization.
 --
 
 CREATE FUNCTION pitch2ly
@@ -337,6 +491,20 @@ $BODY$;
 
 -- TODO: rests do not need to be tied.
 
+-- Function that converts the duration in ticks into a more readable
+-- pair composed by the bar number and the position within the bar.
+
+CREATE FUNCTION bar_pos
+( IN ticks int
+, IN tempo tempo
+, OUT bar int
+, OUT pos numeric
+) LANGUAGE SQL
+AS $$
+SELECT 1 + floor (CAST (ticks AS numeric) * tempo.den / tempo.num / 1536)
+, CAST (mod (ticks + 1536 * tempo.num / tempo.den, 1536 * tempo.num / tempo.den) AS numeric) / 1536 * tempo.den
+$$;
+
 CREATE FUNCTION locutio2ly(l locutio, tempo tempo)
 RETURNS text
 LANGUAGE plpgsql
@@ -389,7 +557,7 @@ CREATE OPERATOR #
 );
 
 --
--- I.9 Comparing two locutiones
+-- I.8 Comparing two locutiones
 --
 
 CREATE FUNCTION locutiones_dist(a locutio, b locutio)
@@ -438,7 +606,7 @@ CREATE TABLE wtc_notes
 , CONSTRAINT wtc_notes_pk PRIMARY KEY (bwv, voice, t, pitch)
 );
 
-COPY wtc_notes FROM '/usr/share/postgresql/16/extension/pgwtc-notes.csv' CSV HEADER;
+COPY wtc_notes FROM '/usr/share/postgresql/17/extension/pgwtc-notes.txt';
 
 -- We populate the wtc_metadata table with some data that we do not
 -- extract from the source .ly files.
@@ -451,7 +619,7 @@ CREATE TABLE wtc_metadata
 , PRIMARY KEY (bwv)
 );
 
-COPY wtc_metadata(bwv,clavis,tempo) FROM '/usr/share/postgresql/16/extension/pgwtc-metadata.csv' CSV HEADER;
+COPY wtc_metadata(bwv,clavis,tempo) FROM '/usr/share/postgresql/17/extension/pgwtc-metadata.csv' CSV HEADER;
 
 ALTER TABLE wtc_metadata
 ALTER COLUMN tempo TYPE tempo USING tempo(tempo);

@@ -1,3 +1,7 @@
+var-*
+*.log
 *~
 INBOX/
 *.pdf
+
+ly/voces/*.ly
