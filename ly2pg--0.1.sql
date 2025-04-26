@@ -65,6 +65,79 @@ CREATE TYPE note AS
 , oct int
 );
 
+CREATE TYPE nota AS
+( tono int
+, alt int
+);
+
+COMMENT ON TYPE nota IS $$
+5 <= tono <= 55, corresponding to the 52 white keys on the piano, with
+middle C being 7*4 = 28.
+
+-2 <= alt <= 2, corresponding to the amount of semitones that the
+alteration applies.
+$$;
+
+CREATE FUNCTION nota(jsonb)
+RETURNS nota
+LANGUAGE sql AS
+$FUNC$
+SELECT CASE
+WHEN substr($1 ->> 'note', 1, 1) IN ('r', 'R', 's') THEN
+NULL :: nota
+ELSE ROW
+( CASE substr($1 ->> 'note', 1, 1)
+  WHEN 'c' THEN 0
+  WHEN 'd' THEN 1
+  WHEN 'e' THEN 2
+  WHEN 'f' THEN 3
+  WHEN 'g' THEN 4
+  WHEN 'a' THEN 5
+  WHEN 'b' THEN 6
+  END
++ 7
+* CASE substr($1 ->> 'note', 2)
+  WHEN ',,,,' THEN 0
+  WHEN ',,,' THEN 1
+  WHEN ',,' THEN 2
+  WHEN ',' THEN 3
+  WHEN '' THEN 4
+  WHEN '''' THEN 5
+  WHEN '''''' THEN 6
+  WHEN '''''''' THEN 7
+  WHEN '''''''''' THEN 8
+  END
+, CASE $1 ->> 'alteration'
+  WHEN 'eses' THEN -2
+  WHEN 'es' THEN -1
+  WHEN 'is' THEN 1
+  WHEN 'isis' THEN 2
+  ELSE 0
+  END
+) :: nota END
+$FUNC$;
+
+CREATE FUNCTION semitono(nota)
+RETURNS int
+LANGUAGE sql AS
+$$
+SELECT CASE nota.tono % 7
+WHEN 0 THEN 0
+WHEN 1 THEN 2
+WHEN 2 THEN 3
+WHEN 3 THEN 5
+WHEN 4 THEN 7
+WHEN 5 THEN 8
+WHEN 6 THEN 10
+END + nota.alt + (nota.tono / 7) * 12
+$$;
+
+CREATE FUNCTION is_rest(nota)
+RETURNS boolean
+LANGUAGE SQL AS $$
+SELECT ($1).tono IS NULL OR ($1).tono > 127
+$$;
+
 CREATE FUNCTION parse_note (text)
 RETURNS note STRICT
 LANGUAGE SQL
@@ -82,11 +155,103 @@ SELECT ROW
 ) :: note
 $$;
 
+CREATE FUNCTION nota_sub(nota, nota)
+RETURNS int
+LANGUAGE SQL AS $$
+SELECT CASE WHEN is_rest($1)
+THEN NULL
+ELSE ($1).tono - (($2).tono % 128)
+END
+$$;
+
+COMMENT ON FUNCTION nota_sub(nota,nota) IS
+
+'This function works on both tones and rests, as it is aware of the
+encoding of rests that remembers the pitch of the previous note.';
+
+CREATE OPERATOR -
+( FUNCTION = nota_sub
+, LEFTARG = nota
+, RIGHTARG = nota
+);
+
+--
+-- The "tempo" data type
+--
+
+CREATE TYPE tempo AS
+( num int
+, den int
+);
+
+CREATE FUNCTION tempo(text)
+RETURNS tempo
+LANGUAGE SQL
+AS $BODY$
+SELECT ROW(a[1], a[2]) :: tempo
+FROM regexp_match($1, '^([0-9]+)/([0-9]+)$') AS f(a)
+$BODY$;
+
+--
+-- The "clavis" data type
+--
+
+CREATE TYPE clavis AS ENUM
+( 'C'
+, 'Cm'
+, 'C#'
+, 'Db'
+, 'C#m'
+, 'D'
+, 'Dm'
+, 'Eb'
+, 'D#m'
+, 'Ebm'
+, 'E'
+, 'Em'
+, 'F'
+, 'Fm'
+, 'F#'
+, 'Gb'
+, 'F#m'
+, 'G'
+, 'Gm'
+, 'Ab'
+, 'G#m'
+, 'A'
+, 'Am'
+, 'Bb'
+, 'Bbm'
+, 'B'
+, 'Bm'
+);
+
+-- We record, for each clavis, the smallest positive offset in
+-- semitones that eliminates alterations. This could be computed, but
+-- it is easier to just record it as given metadata.
+
+CREATE UNLOGGED TABLE claves
+( id clavis PRIMARY KEY
+, maior boolean NOT NULL
+, diesis boolean NOT NULL
+, o int NOT NULL
+);
+
+COPY claves FROM '/usr/share/postgresql/17/extension/ly2pg-claves.csv' CSV HEADER;
+
+--
+-- The "notes" table
+--
+
 CREATE TABLE notes
-( id int REFERENCES tokenized_all (id)
+( id int PRIMARY KEY REFERENCES tokenized_all (id)
 , src text NOT NULL
 , vox vox NOT NULL
-, note jsonb NOT NULL
+, ord int NOT NULL
+, nota nota
+, start int NOT NULL
+, ticks int NOT NULL
+, durations text[] NOT NULL
 );
 
 COMMENT ON TABLE notes IS
@@ -178,13 +343,12 @@ CREATE PROCEDURE extract_notes(v_src text, v_vox vox)
 LANGUAGE plpgsql
 AS $BODY$
 DECLARE
-  context_id int;
+--  context_id int;
   context_ids int[] := '{}';
   context_kinds text[] := '{}';
 
   c SCROLL CURSOR (s text, v vox) FOR
-    SELECT row_number() OVER (ORDER BY id) AS pos
-    , id, obj
+    SELECT id, obj
     FROM ly2pg.objectified
     WHERE src = v_src
       AND vox = v_vox
@@ -204,16 +368,16 @@ DECLARE
   time_num int;
   time_den int;
   current_note_start int := 0;
-  current_note jsonb;
+  current_note_ord int := 1;
+  current_note nota;
+  previous_note nota;
+  previous_note_id int := NULL;
   note_durations text[] := '{}';
   ticks int := 0;
 BEGIN
   RAISE DEBUG 'CP400 extract_notes';
 
   FOR x IN c (v_src, v_vox) LOOP
-
-    RAISE DEBUG E'CP401 %:% (% | % | %, %)\n%', v_src, v_vox
-    , context_ids, context_kinds, x.pos, x.id, jsonb_pretty(x.obj);
 
     CASE
 
@@ -242,28 +406,59 @@ BEGIN
     WHEN x.obj ? 'note'
     THEN
       CONTINUE WHEN context_kinds != ARRAY['{'];
-      RAISE DEBUG 'CP402';
+      current_note   := nota(x.obj);
+      IF current_note IS NULL THEN
+        current_note := ROW
+        ( (previous_note).tono + 128
+        , (previous_note).alt
+        ) :: nota;
+      ELSE
+        previous_note := current_note;
+      END IF;
       note_durations := note_durations     || (x.obj ->> 'duration');
       ticks          := ticks + duration2ticks(x.obj ->> 'duration');
       FETCH c INTO x1;
-      IF x1.obj ->> 0 = '~' THEN
-        RAISE DEBUG 'CP403';
+      MOVE PRIOR FROM c;
+      IF x1.obj ->> 0 = '~'
+      THEN
+        -- skip tie symbol
+        MOVE NEXT FROM c;
+      ELSIF 
+        (
+          x.obj  ->> 'note' IN ('R', 'r')
+          AND
+          x1.obj ->> 'note' IN ('R', 'r')
+        )
+      THEN
+        -- implicitly tie rests
+        NULL;
       ELSE
-        MOVE PRIOR FROM c;
-        current_note := jsonb_build_object
-        ( 'position'  , current_note_start
-        , 'duration'  , ticks
-        , 'note'      , x.obj -> 'note'
-        , 'alteration', x.obj -> 'alteration'
-        , 'durations' , note_durations
-        );
+        -- do not tie; emit the note instead
         INSERT INTO notes
-        VALUES (x.id, v_src, v_vox, jsonb_strip_nulls(current_note));
+        ( id
+        , src
+        , vox
+        , ord
+        , nota
+        , start
+        , ticks
+        , durations
+        ) VALUES
+        ( x.id
+        , v_src
+        , v_vox
+        , current_note_ord
+        , current_note
+        , current_note_start
+        , ticks
+        , note_durations
+        );
         COMMIT;
-        RAISE DEBUG 'CP409 note %', jsonb_strip_nulls(current_note);
         current_note_start := current_note_start + ticks;
-	note_durations := '{}';
-	ticks := 0;
+        current_note_ord := current_note_ord + 1;
+        previous_note_id := x.id;
+        note_durations := '{}';
+        ticks := 0;
       END IF;
 
     --
@@ -293,7 +488,7 @@ BEGIN
       FETCH c INTO x1;
       time_num := CAST (x1.obj ->> 0 AS int);
       time_den := CAST (x1.obj ->> 1 AS int);
-      RAISE DEBUG E'CP420 %/%', time_num, time_den;
+      -- TODO: use time_num,time_den
 
     --
     -- (V) keys with 2 arguments
@@ -307,8 +502,6 @@ BEGIN
       key_note := parse_note(x1.obj ->> 'note');
       key_major := x2.obj ->> 'key' = 'major';
 
-      RAISE DEBUG E'CP430 %, %', key_note, key_major;
-
     --
     -- (VI) keys with 3 arguments
     --
@@ -318,8 +511,6 @@ BEGIN
       FETCH c INTO x1;
       FETCH c INTO x2;
       FETCH c INTO x3;
-      RAISE DEBUG 'CP440 % [ % | % | % ]', x.obj ->> 'key'
-      , x1.obj, x2.obj, x3.obj;
       CONTINUE;
 
     --
@@ -344,14 +535,14 @@ BEGIN
         CONTINUE;
       ELSE
         RAISE EXCEPTION 'CP450 UNSUPPORTED [% %] %\n% | % | % | % | % | %'
-	, v_src, v_vox, x.obj
-	, x1.obj
-	, x2.obj
-	, x3.obj
-	, x4.obj
-	, x5.obj
-	, x6.obj
-	;
+        , v_src, v_vox, x.obj
+        , x1.obj
+        , x2.obj
+        , x3.obj
+        , x4.obj
+        , x5.obj
+        , x6.obj
+        ;
       END IF;
       
     ELSE
@@ -441,7 +632,6 @@ BEGIN
       AND m.vox = v_vox
     ORDER BY m.id
   LOOP
-    RAISE DEBUG 'CP201 %', x;
     CASE
 
     --

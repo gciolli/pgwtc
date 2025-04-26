@@ -1,8 +1,10 @@
 # pgwtc extension
 comment = 'Well Tempered Clavier on PostgreSQL'
-default_version = '0.1dev'
+default_version = '0.1'
 superuser = false
 
 # By choice, to enforce a default location
 relocatable = false
 schema = pgwtc
+
+requires = 'ly2pg'

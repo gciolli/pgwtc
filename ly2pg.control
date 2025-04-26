@@ -1,6 +1,6 @@
 # ly2pg extension
 comment = 'Import LilyPond files into PostgreSQL'
-default_version = '0.1dev'
+default_version = '0.1'
 superuser = false
 
 # By choice, to enforce a default location

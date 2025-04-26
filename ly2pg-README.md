@@ -79,7 +79,7 @@ uses LilyPond to extract voices into individual files, such as e.g.
 On a standard laptop, the 48 fugues are processed in about 7 minutes.
 
 Finally, we can load the voice files into PostgreSQL, and extract them
-into a single CSV file `pgwtc-music.csv`:
+into a single CSV file `pgwtc-notes.csv`:
 
     psql -f /usr/share/postgresql/17/extension/ly2pg-wtc-load.sql
 
