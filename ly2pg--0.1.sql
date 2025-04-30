@@ -202,7 +202,7 @@ $$;
 CREATE FUNCTION nota_sub(nota, nota)
 RETURNS int
 LANGUAGE SQL AS $$
-SELECT CASE WHEN is_rest($1)
+SELECT CASE WHEN ly2pg.is_rest($1)
 THEN NULL
 ELSE ($1).tono - (($2).tono % 128)
 END
