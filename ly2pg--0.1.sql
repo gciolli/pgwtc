@@ -117,6 +117,50 @@ ELSE ROW
 ) :: nota END
 $FUNC$;
 
+CREATE FUNCTION lilypond(nota)
+RETURNS text
+LANGUAGE SQL AS
+$$
+SELECT CASE WHEN ($1).tono > 127 THEN 'r' ELSE
+format('%s%s%s'
+, CASE ($1).tono % 7
+  WHEN 0 THEN 'c'
+  WHEN 1 THEN 'd'
+  WHEN 2 THEN 'e'
+  WHEN 3 THEN 'f'
+  WHEN 4 THEN 'g'
+  WHEN 5 THEN 'a'
+  WHEN 6 THEN 'b'
+  END
+, CASE ($1).alt
+  WHEN  2 THEN 'isis'
+  WHEN  1 THEN 'is'
+  WHEN  0 THEN ''
+  WHEN -1 THEN 'es'
+  WHEN -2 THEN 'eses'
+  END
+, CASE ($1).tono / 7
+  WHEN 0 THEN ',,,,'
+  WHEN 1 THEN ',,,'
+  WHEN 2 THEN ',,'
+  WHEN 3 THEN ','
+  WHEN 4 THEN ''
+  WHEN 5 THEN ''''
+  WHEN 6 THEN ''''''
+  WHEN 7 THEN ''''''''
+  WHEN 8 THEN ''''''''''
+  END
+) END
+$$;
+
+CREATE FUNCTION lilypond(nota[])
+RETURNS text
+LANGUAGE SQL AS
+$$
+SELECT string_agg(lilypond(ROW(tono, alt) :: nota), ' ')
+FROM unnest($1) AS f(tono, alt)
+$$;
+
 CREATE FUNCTION semitono(nota)
 RETURNS int
 LANGUAGE sql AS

@@ -101,7 +101,7 @@ BEGIN
   IF s.start IS NULL THEN
     -- We attempt initializing the state, as it is not initialized
     -- yet.
-    IF is_rest(n) THEN
+    IF ly2pg.is_rest(n) THEN
       -- We start from a rest, so we initialize the state in a way
       -- that will not compute the spectrum.
       o.start      := NULL;
@@ -119,7 +119,7 @@ BEGIN
     -- This is not the first iteration, so we compute one delta
     o.s.deltas :=
       (s).s.deltas || (
-        CASE WHEN is_rest(n)
+        CASE WHEN ly2pg.is_rest(n)
 	THEN NULL
 	ELSE
 	  (n).tono - ((s).last_nota.tono % 128)
@@ -147,7 +147,7 @@ THEN ROW
   ( (s).s.deltas
   , (s).s.ratios
   , (s).s.duration
-  - CASE WHEN is_rest((s).last_nota)
+  - CASE WHEN ly2pg.is_rest((s).last_nota)
     THEN (s).last_ticks
     ELSE 0 END
   ) :: spectrum
@@ -322,7 +322,7 @@ WITH RECURSIVE occurrences AS (
    AND n2.ord = n1.ord + 1
   JOIN subjects s
     ON s.src = n1.src
-  WHERE NOT is_rest(n1.nota)
+  WHERE NOT ly2pg.is_rest(n1.nota)
     AND NOT (s.min_ord = n1.ord AND s.vox = n1.vox)
     AND n2.nota   - n1.nota
     	IS NOT DISTINCT FROM
@@ -350,7 +350,7 @@ UNION ALL
   SELECT DISTINCT ON (src, vox, initio)
     *
   FROM occurrences
-  WHERE depth > 4 -- at least 5 notes!
+  WHERE depth > 9 -- at least 10 notes
   ORDER BY src, vox, initio, depth DESC
 )
 SELECT m.src
