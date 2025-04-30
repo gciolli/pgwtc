@@ -366,3 +366,13 @@ SELECT m.src
 FROM longest_occurrences o
 JOIN metadata m USING (src)
 ORDER BY src, o.initio, vox;
+
+CREATE VIEW subject_occurrences_pretty AS
+SELECT src
+, initio @ tempo AS pos
+, vox
+, depth
+, lilypond(note)
+, ticks
+FROM subject_occurrences
+ORDER BY src, initio, vox;
