@@ -3,13 +3,8 @@
 
 DROP EXTENSION IF EXISTS ly2pg CASCADE;
 CREATE EXTENSION pgwtc CASCADE;
-SET search_path = pgwtc, ly2pg, public;
+--SET search_path = pgwtc, ly2pg, public;
 
-SELECT src
-, initio @ tempo AS pos
-, vox
-, depth
-, lilypond(note)
-, ticks
-FROM subject_occurrences
+SELECT *
+FROM pgwtc.subject_occurrences_pretty
 ORDER BY src, initio, vox;

@@ -157,7 +157,7 @@ CREATE FUNCTION lilypond(nota[])
 RETURNS text
 LANGUAGE SQL AS
 $$
-SELECT string_agg(lilypond(ROW(tono, alt) :: nota), ' ')
+SELECT string_agg(ly2pg.lilypond(ROW(tono, alt) :: ly2pg.nota), ' ')
 FROM unnest($1) AS f(tono, alt)
 $$;
 
