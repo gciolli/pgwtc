@@ -9,11 +9,12 @@ CREATE TABLE metadata
 ( src text
 , clavis clavis
 , tempo text NOT NULL
-, gcd int
+, subject_length int
 , PRIMARY KEY (src)
 );
 
-COPY metadata(src,clavis,tempo) FROM '/usr/share/postgresql/17/extension/pgwtc-metadata.csv' CSV HEADER;
+COPY metadata(src,clavis,tempo,subject_length)
+FROM '/usr/share/postgresql/17/extension/pgwtc-metadata.csv' CSV HEADER;
 
 ALTER TABLE metadata
 ALTER COLUMN tempo TYPE tempo USING tempo(tempo);
@@ -261,6 +262,60 @@ CREATE OPERATOR @
 );
 
 --
+-- Formatting Lilypond code
+--
+
+CREATE FUNCTION lilypond_voice
+( src text
+, vox vox
+, start_id int DEFAULT NULL
+, max_count bigint DEFAULT NULL
+) RETURNS text
+LANGUAGE plpgsql AS $BODY$
+DECLARE
+  v_src ALIAS FOR src;
+  v_vox ALIAS FOR vox;
+  start_ord int DEFAULT 1;
+  x text;
+BEGIN
+  IF start_id IS NOT NULL THEN
+    SELECT ord
+    INTO STRICT start_ord
+    FROM pgwtc.notes n
+    WHERE n.src = v_src
+    AND n.vox = v_vox
+    AND id = start_id;
+  END IF;
+  WITH RECURSIVE ids AS (
+    SELECT id, ord
+    FROM pgwtc.notes n
+    WHERE n.src = v_src
+    AND n.vox = v_vox
+    AND ord = start_ord
+  UNION ALL
+    SELECT n.id, n.ord
+    FROM ids
+    JOIN pgwtc.notes n
+      ON n.src = v_src
+     AND n.vox = v_vox
+     AND n.ord = ids.ord + 1
+     AND COALESCE(n.ord < start_ord + max_count, true)
+  ), notes_with_durations AS (
+    SELECT ord
+    , string_agg(ly2pg.lilypond(nota, f.d), ' ~ ' ORDER BY f.i) AS lilypond
+    FROM ids
+    JOIN pgwtc.notes n USING (id, ord)
+    CROSS JOIN LATERAL unnest(n.durations) WITH ORDINALITY AS f(d, i)
+    GROUP BY ord
+  )
+  SELECT string_agg(lilypond, ' ' ORDER BY ord)
+  INTO x STRICT
+  FROM notes_with_durations;
+  RETURN x;
+END;
+$BODY$;
+
+--
 -- Subjects
 --
 
@@ -270,40 +325,58 @@ WITH RECURSIVE first_notes AS (
     min(start) AS start
   , src
   , vox
-  FROM notes
+  FROM pgwtc.notes
   WHERE (nota).tono IS NOT NULL
   GROUP BY src, vox
   ORDER BY src, min(start)
-), subjects_unnested AS (
+), subject_ids AS (
   SELECT
     src
   , vox
+  , id
   , ord
-  , nota
-  , ticks
+  , 1 AS depth
+  , n.nota
   FROM first_notes f
-  JOIN notes n USING (src, vox, start)
+  JOIN pgwtc.notes n USING (src, vox, start)
 UNION ALL
   SELECT
     n.src
   , n.vox
+  , n.id
   , n.ord
+  , s.depth + 1 AS depth
   , n.nota
-  , n.ticks
-  FROM notes n
-  JOIN subjects_unnested s
+  FROM pgwtc.notes n
+  JOIN pgwtc.metadata m USING (src)
+  JOIN subject_ids s
     ON n.src = s.src
    AND n.vox = s.vox
    AND n.ord = s.ord + 1
+  WHERE s.depth < m.subject_length
+), aggregated_subject_ids AS (
+  SELECT
+    src
+  , vox
+  , array_agg(id   ORDER BY ord) AS ids
+  , array_agg(nota ORDER BY ord) AS note
+  FROM subject_ids
+  GROUP BY src, vox
+  ORDER BY src, vox
 )
-SELECT src
+SELECT
+  src
 , vox
-, min(ord) AS min_ord
-, array_agg(nota  ORDER BY ord) AS note
-, array_agg(ticks ORDER BY ord) AS ticks
-FROM subjects_unnested
-GROUP BY src, vox
-ORDER BY src;
+, start
+, tempo
+, clavis
+, lilypond_voice(src, vox, ids[1], array_length(ids, 1))
+, ids
+, note
+FROM aggregated_subject_ids s
+JOIN pgwtc.metadata USING (src)
+JOIN first_notes USING (src, vox)
+ORDER BY src, vox;
 
 CREATE VIEW subject_occurrences AS
 WITH RECURSIVE occurrences AS (
@@ -314,16 +387,15 @@ WITH RECURSIVE occurrences AS (
   , n1.start AS initio
   , ARRAY[n1.id , n2.id ] AS ids
   , ARRAY[n1.nota , n2.nota ] AS note
-  , ARRAY[n1.ticks, n2.ticks] AS ticks
-  FROM notes n1
-  JOIN notes n2
+  FROM pgwtc.notes n1
+  JOIN pgwtc.notes n2
     ON n2.src = n1.src
    AND n2.vox = n1.vox
    AND n2.ord = n1.ord + 1
-  JOIN subjects s
+  JOIN pgwtc.subjects s
     ON s.src = n1.src
   WHERE NOT ly2pg.is_rest(n1.nota)
-    AND NOT (s.min_ord = n1.ord AND s.vox = n1.vox)
+    AND NOT s.ids[1] = n1.id
     AND n2.nota   - n1.nota
     	IS NOT DISTINCT FROM
         s.note[2] - s.note[1]
@@ -335,13 +407,12 @@ UNION ALL
   , o.initio
   , o.ids   || n.id
   , o.note  || n.nota
-  , o.ticks || n.ticks
   FROM occurrences o
-  JOIN notes n
+  JOIN pgwtc.notes n
     ON n.src = o.src
    AND n.vox = o.vox
    AND n.ord = o.ord + 1
-  JOIN subjects s
+  JOIN pgwtc.subjects s
     ON s.src = o.src
   WHERE n.nota - o.note[o.depth]
         IS NOT DISTINCT FROM
@@ -350,29 +421,83 @@ UNION ALL
   SELECT DISTINCT ON (src, vox, initio)
     *
   FROM occurrences
-  WHERE depth > 9 -- at least 10 notes
+  WHERE depth > 4
   ORDER BY src, vox, initio, depth DESC
 )
-SELECT m.src
-, m.clavis
-, m.tempo
-, o.initio
-, o.depth
-, o.ord
+SELECT
+  o.src
 , o.vox
-, o.note
-, o.ticks
+, o.initio
+, o.ord
+, o.depth
 , o.ids
 FROM longest_occurrences o
-JOIN metadata m USING (src)
 ORDER BY src, o.initio, vox;
 
 CREATE VIEW subject_occurrences_pretty AS
-SELECT src
-, initio @ tempo AS pos
+SELECT
+  src
 , vox
-, depth
-, lilypond(note)
-, ticks
-FROM subject_occurrences
-ORDER BY src, initio, vox;
+, initio @ tempo AS initio
+, lilypond_voice(src, vox, ids[1], array_length(ids, 1))
+FROM subject_occurrences o
+JOIN pgwtc.metadata USING (src)
+ORDER BY src, o.initio;
+
+CREATE FUNCTION lilypond_subjects()
+RETURNS SETOF text
+LANGUAGE plpgsql
+AS $BODY$
+DECLARE
+  x RECORD;
+BEGIN
+
+  RETURN NEXT $$
+\documentclass[a4paper]{article}
+\title{pgwtc subjects}
+\begin{document}
+$$;
+  FOR x IN
+    SELECT *
+    , format('%s/%s', (tempo).num, (tempo).den) AS time
+    FROM pgwtc.subjects
+    ORDER BY src
+  LOOP
+
+    RETURN NEXT format($$
+\section{%s (%s)}
+\begin{lilypond}
+\absolute{
+  \key %s
+  \time %s
+  \clef %s
+  %s
+  %s
+}
+\end{lilypond}
+$$
+    , x.src
+    , x.vox
+    , ly2pg.clavis2lilypond(x.clavis)
+    , x.time
+    , CASE x.vox
+      WHEN 'soprano' THEN 'treble'
+      WHEN 'alto'    THEN 'treble'
+      WHEN 'mezzo'   THEN 'treble'
+      WHEN 'tenor'   THEN 'bass'
+      WHEN 'bass'    THEN 'bass'
+      END
+    , CASE
+      WHEN x.start > 0 THEN
+      format('r%s', ly2pg.ticks2duration(x.start))
+      ELSE ''
+      END
+    , x.lilypond_voice
+    );
+  END LOOP;
+
+  RETURN NEXT $$
+\end{document}
+$$;
+END;
+$BODY$;

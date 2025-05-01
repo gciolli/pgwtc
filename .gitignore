@@ -5,3 +5,6 @@ INBOX/
 *.pdf
 
 ly/voces/*.ly
+
+cache/*
+doc/cache/*

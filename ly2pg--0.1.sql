@@ -117,12 +117,14 @@ ELSE ROW
 ) :: nota END
 $FUNC$;
 
-CREATE FUNCTION lilypond(nota)
+CREATE FUNCTION lilypond(nota, ext text DEFAULT '')
 RETURNS text
 LANGUAGE SQL AS
 $$
-SELECT CASE WHEN ($1).tono > 127 THEN 'r' ELSE
-format('%s%s%s'
+SELECT CASE
+WHEN COALESCE(($1).tono, 128) > 127 THEN format ('r%s', $2)
+ELSE
+format('%s%s%s%s'
 , CASE ($1).tono % 7
   WHEN 0 THEN 'c'
   WHEN 1 THEN 'd'
@@ -150,15 +152,17 @@ format('%s%s%s'
   WHEN 7 THEN ''''''''
   WHEN 8 THEN ''''''''''
   END
+, $2
 ) END
 $$;
 
-CREATE FUNCTION lilypond(nota[])
+CREATE FUNCTION lilypond(nota[], ext text[] DEFAULT ARRAY[''])
 RETURNS text
 LANGUAGE SQL AS
 $$
-SELECT string_agg(ly2pg.lilypond(ROW(tono, alt) :: ly2pg.nota), ' ')
+SELECT string_agg(ly2pg.lilypond(ROW(tono, alt) :: ly2pg.nota) || e, ' ')
 FROM unnest($1) AS f(tono, alt)
+, unnest($2) AS g(e)
 $$;
 
 CREATE FUNCTION semitono(nota)
@@ -283,6 +287,31 @@ CREATE UNLOGGED TABLE claves
 
 COPY claves FROM '/usr/share/postgresql/17/extension/ly2pg-claves.csv' CSV HEADER;
 
+CREATE FUNCTION clavis2lilypond(clavis)
+RETURNS text
+LANGUAGE SQL AS $BODY$
+WITH a AS (
+  SELECT id
+  , maior
+  , diesis
+  , lower(id :: text) AS text
+  , length(id :: text) - CASE WHEN maior THEN 0 ELSE 1 END AS lm
+  FROM ly2pg.claves
+  WHERE id = $1
+)
+
+SELECT format
+( '%s%s \%s'
+, substr(text,1,1)
+, CASE
+  WHEN lm = 1 THEN ''
+  WHEN lm = 2 AND substr(text,lm,1)='#' THEN 'is'
+  WHEN lm = 2 AND substr(text,lm,1)='b' THEN 'es'
+  END
+, CASE WHEN maior THEN 'major' ELSE 'minor' END
+) FROM a
+$BODY$;
+
 --
 -- The "notes" table
 --
@@ -350,6 +379,16 @@ BEGIN
 END;
 $$;
 
+CREATE FUNCTION text_error(text)
+RETURNS text
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  RAISE EXCEPTION '%', $1;
+  RETURN NULL;
+END;
+$$;
+
 CREATE FUNCTION duration2ticks(text)
 RETURNS int
 LANGUAGE SQL AS $$
@@ -380,7 +419,31 @@ WHEN  '1..' THEN 384 + 192 + 96
 
 WHEN '\breve' THEN 384 * 2
 
-ELSE int_error(format('invalid duration <%s>', $1))
+ELSE ly2pg.int_error(format('invalid duration <%s>', $1))
+END $$;
+
+CREATE FUNCTION ticks2duration(int)
+RETURNS text
+LANGUAGE SQL AS $$
+SELECT CASE $1
+
+WHEN   6 THEN '64'
+WHEN  12 THEN '32'
+WHEN  24 THEN '16'
+WHEN  48 THEN  '8'
+WHEN  96 THEN  '4'
+WHEN 192 THEN  '2'
+WHEN 384 THEN  '1'
+
+WHEN   9 THEN '64.'
+WHEN  18 THEN '32.'
+WHEN  36 THEN '16.'
+WHEN  72 THEN  '8.'
+WHEN 144 THEN  '4.'
+WHEN 288 THEN  '2.'
+WHEN 576 THEN  '1.'
+
+ELSE ly2pg.text_error(format('unsupported ticks <%s>', $1))
 END $$;
 
 CREATE PROCEDURE extract_notes(v_src text, v_vox vox)
