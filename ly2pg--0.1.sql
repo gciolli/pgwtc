@@ -84,7 +84,7 @@ LANGUAGE sql AS
 $FUNC$
 SELECT CASE
 WHEN substr($1 ->> 'note', 1, 1) IN ('r', 'R', 's') THEN
-NULL :: nota
+NULL :: ly2pg.nota
 ELSE ROW
 ( CASE substr($1 ->> 'note', 1, 1)
   WHEN 'c' THEN 0
@@ -114,7 +114,7 @@ ELSE ROW
   WHEN 'isis' THEN 2
   ELSE 0
   END
-) :: nota END
+) :: ly2pg.nota END
 $FUNC$;
 
 CREATE FUNCTION lilypond(nota, ext text DEFAULT '')
@@ -160,7 +160,7 @@ CREATE FUNCTION lilypond(nota[], ext text[] DEFAULT ARRAY[''])
 RETURNS text
 LANGUAGE SQL AS
 $$
-SELECT string_agg(ly2pg.lilypond(ROW(tono, alt) :: ly2pg.nota) || e, ' ')
+SELECT string_agg(lilypond(ROW(tono, alt) :: ly2pg.nota) || e, ' ')
 FROM unnest($1) AS f(tono, alt)
 , unnest($2) AS g(e)
 $$;
@@ -191,7 +191,7 @@ RETURNS note STRICT
 LANGUAGE SQL
 AS $$
 SELECT ROW
-( CAST (substr($1, 1, 1) AS note_name)
+( CAST (substr($1, 1, 1) AS ly2pg.note_name)
 , CASE substr($1, 2)
   WHEN 'eses' THEN -2
   WHEN 'es' THEN -1
@@ -200,7 +200,7 @@ SELECT ROW
   WHEN 'isis' THEN 2
   END
 , NULL :: int
-) :: note
+) :: ly2pg.note
 $$;
 
 CREATE FUNCTION nota_sub(nota, nota)
@@ -239,6 +239,42 @@ AS $BODY$
 SELECT ROW(a[1], a[2]) :: tempo
 FROM regexp_match($1, '^([0-9]+)/([0-9]+)$') AS f(a)
 $BODY$;
+
+CREATE FUNCTION tempo2text(tempo)
+RETURNS text
+LANGUAGE SQL
+AS $BODY$
+SELECT format('%s/%s', ($1).num, ($1).den)
+$BODY$;
+
+CREATE FUNCTION tempo2ticks(tempo)
+RETURNS int
+LANGUAGE SQL
+AS $$
+SELECT 384 * ($1).num / ($1).den
+$$;
+
+CREATE FUNCTION ticks_at_tempo(int, tempo)
+RETURNS text
+LANGUAGE SQL
+AS $$
+WITH a(bar, beat) AS (
+  SELECT
+    ly2pg.tempo2ticks($2) AS bar
+  , ly2pg.tempo2ticks($2) / ($2).num AS beat
+)
+SELECT format('%03s:%s'
+, $1 / bar + 1
+, round(($1 % bar) / (beat :: numeric) + 1, 3)
+)
+FROM a
+$$;
+
+CREATE OPERATOR @
+( FUNCTION = ticks_at_tempo
+, LEFTARG = int
+, RIGHTARG = tempo
+);
 
 --
 -- The "clavis" data type
@@ -348,7 +384,7 @@ SELECT id, src, vox, token, matched, args
   ( 'token', token
   , 'args', args
   ) AS obj
-FROM ly2pg.tokenized_all
+FROM tokenized_all
 WHERE token NOT IN ('BLANK', 'COMMENT', 'BAR', '[', ']', '(', ')');
 
 COMMENT ON VIEW tokenized IS
@@ -454,7 +490,7 @@ DECLARE
   context_ids int[] := '{}';
   context_kinds text[] := '{}';
 
-  c SCROLL CURSOR (s text, v vox) FOR
+  c SCROLL CURSOR (s text, v ly2pg.vox) FOR
     SELECT id, obj
     FROM ly2pg.objectified
     WHERE src = v_src
@@ -470,14 +506,14 @@ DECLARE
 
   -- Variables capturing Lilypond state
   absolute_pitch_mode boolean;
-  key_note note;
+  key_note ly2pg.note;
   key_major boolean;
   time_num int;
   time_den int;
   current_note_start int := 0;
   current_note_ord int := 1;
-  current_note nota;
-  previous_note nota;
+  current_note ly2pg.nota;
+  previous_note ly2pg.nota;
   previous_note_id int := NULL;
   note_durations text[] := '{}';
   ticks int := 0;
@@ -513,17 +549,17 @@ BEGIN
     WHEN x.obj ? 'note'
     THEN
       CONTINUE WHEN context_kinds != ARRAY['{'];
-      current_note   := nota(x.obj);
+      current_note   := ly2pg.nota(x.obj);
       IF current_note IS NULL THEN
         current_note := ROW
         ( (previous_note).tono + 128
         , (previous_note).alt
-        ) :: nota;
+        ) :: ly2pg.nota;
       ELSE
         previous_note := current_note;
       END IF;
-      note_durations := note_durations     || (x.obj ->> 'duration');
-      ticks          := ticks + duration2ticks(x.obj ->> 'duration');
+      note_durations := note_durations           || (x.obj ->> 'duration');
+      ticks          := ticks + ly2pg.duration2ticks(x.obj ->> 'duration');
       FETCH c INTO x1;
       MOVE PRIOR FROM c;
       IF x1.obj ->> 0 = '~'
@@ -541,7 +577,7 @@ BEGIN
         NULL;
       ELSE
         -- do not tie; emit the note instead
-        INSERT INTO notes
+        INSERT INTO ly2pg.notes
         ( id
         , src
         , vox
@@ -606,7 +642,7 @@ BEGIN
     THEN
       FETCH c INTO x1;
       FETCH c INTO x2;
-      key_note := parse_note(x1.obj ->> 'note');
+      key_note := ly2pg.parse_note(x1.obj ->> 'note');
       key_major := x2.obj ->> 'key' = 'major';
 
     --
@@ -747,7 +783,7 @@ BEGIN
 
     WHEN x.token IN ('FALSE', 'TRUE')
     THEN
-      INSERT INTO objectified(id, src, vox, obj)
+      INSERT INTO ly2pg.objectified(id, src, vox, obj)
       SELECT x.id
       , v_src
       , v_vox
@@ -760,7 +796,7 @@ BEGIN
 
     WHEN x.token IN ('INT')
     THEN
-      INSERT INTO objectified(id, src, vox, obj)
+      INSERT INTO ly2pg.objectified(id, src, vox, obj)
       SELECT x.id
       , v_src
       , v_vox
@@ -773,7 +809,7 @@ BEGIN
 
     WHEN x.token IN ('<', '>', '{', '}', '<<', '>>', '~', '=')
     THEN
-      INSERT INTO objectified(id, src, vox, obj)
+      INSERT INTO ly2pg.objectified(id, src, vox, obj)
       SELECT x.id
       , v_src
       , v_vox
@@ -786,7 +822,7 @@ BEGIN
 
     WHEN x.token IN ('NOTE')
     THEN
-      INSERT INTO objectified(id, src, vox, obj)
+      INSERT INTO ly2pg.objectified(id, src, vox, obj)
       SELECT x.id
       , v_src
       , v_vox
@@ -805,7 +841,7 @@ BEGIN
 
     WHEN x.token IN ('MREST')
     THEN
-      INSERT INTO objectified(id, src, vox, obj)
+      INSERT INTO ly2pg.objectified(id, src, vox, obj)
       SELECT x.id
       , v_src
       , v_vox
@@ -825,7 +861,7 @@ BEGIN
 
     WHEN x.token IN ('KEY', 'ID', 'STR', 'REF')
     THEN
-      INSERT INTO objectified(id, src, vox, obj)
+      INSERT INTO ly2pg.objectified(id, src, vox, obj)
       SELECT x.id
       , v_src
       , v_vox
@@ -838,7 +874,7 @@ BEGIN
 
     WHEN x.token IN ('TIME')
     THEN
-      INSERT INTO objectified(id, src, vox, obj)
+      INSERT INTO ly2pg.objectified(id, src, vox, obj)
       SELECT x.id
       , v_src
       , v_vox
@@ -854,7 +890,7 @@ BEGIN
 
     WHEN x.token IN ('SCM')
     THEN
-      INSERT INTO objectified(id, src, vox, obj)
+      INSERT INTO ly2pg.objectified(id, src, vox, obj)
       SELECT x.id
       , v_src
       , v_vox
@@ -875,7 +911,7 @@ BEGIN
     --
 
     ELSE
-      INSERT INTO objectified(id, src, vox, obj)
+      INSERT INTO ly2pg.objectified(id, src, vox, obj)
       SELECT x.id
       , v_src
       , v_vox
@@ -946,23 +982,23 @@ BEGIN
   --
   -- Step 1. We split the input into a sequence of tokens.
   --
-  CALL ly2pg.tokenize (src, vox, cnt);
+  CALL tokenize (src, vox, cnt);
   --
   -- Step 2. We process the sequence of tokens and build a sequence of
   --         JSON objects that include only the relevant data,
   --         properly tagged.
   --
-  CALL ly2pg.build_objects (src, vox);
+  CALL build_objects (src, vox);
   --
   -- Step 3. We identify and record the various kinds of contexts
   --         (groups) being used in the input.
   --
-  CALL ly2pg.detect_contexts (src, vox);
+  CALL detect_contexts (src, vox);
   --
   -- Step 4. We process the sequence of JSON objects, and build a
   --         sequence of musical notes (and rests) for each voice.
   --
-  CALL ly2pg.extract_notes (src, vox);
+  CALL extract_notes (src, vox);
 END;
 $BODY$;
 

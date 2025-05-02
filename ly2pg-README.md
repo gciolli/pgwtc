@@ -1,7 +1,7 @@
 # Overview
 
 This extension includes code for extracting music from LilyPond source
-files.
+files, and to load it on PostgreSQL.
 
 It is known to work on the LilyPond sources in [Rother, K. 2015. An
 'open source' open score edition of Bach's Well-tempered
@@ -11,12 +11,16 @@ many other Lilypond source files.
 
 # Example: the Well-Tempered Clavier
 
-First, we unpack the source archives:
+In this example we document how the `pgwtc-notes.csv` file, which is
+included in the `pgwtc` extension, was created using the `ly2pg`
+extension.
+
+First, unpack the source archives:
 
     unzip bach_WTCbook1_openscore.zip 
     unzip bach_WTCbook2_openscore.zip 
 
-Then, we rename the LilyPond sources to easier, consistent file names:
+Then, rename the LilyPond sources to easier, consistent file names:
 
     mkdir ly
     mv book1/fugue1_846/fugue1_expanded.ly              ly/fuga-bwv846.ly
@@ -68,8 +72,8 @@ Then, we rename the LilyPond sources to easier, consistent file names:
     mv book2/fugue23_892/fugue23_expanded.ly            ly/fuga-bwv892.ly
     mv book2/fugue24_893/fugue24_expanded.ly            ly/fuga-bwv893.ly
 
-At this point we can run the `ly2pg-wtc-voces.sh` shell script, which
-uses LilyPond to extract voices into individual files, such as e.g.
+At this point, run the `ly2pg-wtc-voces.sh` shell script, which uses
+LilyPond to extract voices into individual files, such as e.g.
 `ly/voces/fuga-bwv871-alto.ly`:
 
     for bwv in $(seq 846 893); do
@@ -78,10 +82,7 @@ uses LilyPond to extract voices into individual files, such as e.g.
 
 On a standard laptop, the 48 fugues are processed in about 7 minutes.
 
-Finally, we can load the voice files into PostgreSQL, and extract them
-into a single CSV file `pgwtc-notes.csv`:
+Finally, load the voice files into PostgreSQL, and extract them into a
+single CSV file `pgwtc-notes.csv`:
 
     psql -f /usr/share/postgresql/17/extension/ly2pg-wtc-load.sql
-
-Note that this is the same file which is included in the `pgwtc`
-extension.
