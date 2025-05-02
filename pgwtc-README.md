@@ -34,8 +34,8 @@ and then you can connect to PostgreSQL as superuser and issue
 which will automatically install the `ly2pg` extension as a
 dependency:
 	
-	NOTICE: installing required extension "ly2pg" CREATE
-    EXTENSION
+	NOTICE: installing required extension "ly2pg"
+	CREATE EXTENSION
 
 ## Notes
 
