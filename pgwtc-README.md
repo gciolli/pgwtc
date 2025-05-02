@@ -101,6 +101,12 @@ in a easier aggregate format, combined with some metadata:
      BWV846 | alto |   1:1.500 | C      | c'8 d'8 e'8 f'8. g'32 f'32 e'8 a'8 d'8 g'8 ~ g'16 a'16 g'16 f'16 e'16
     (1 row)
 
+The subjects are displayed in a more conventional music notation in
+the `doc/pgwtc-subjects.lb.pdf` file.  If you have Lilypond installed,
+you can build it automatically as follows:
+
+    make -C doc
+
 ## Subject Occurrences
 
 The `pgwtc.subject_occurrences_pretty` view exposes the occurrences of
@@ -125,6 +131,9 @@ TODO: repeat the query after properly removing short subject
 fragments.
 
 TODO: choose one between "initio" and "start".
+
+TODO: subject occurrences should also be displayed with
+`lilypond-book`
 
 # References
 
