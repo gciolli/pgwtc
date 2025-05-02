@@ -201,10 +201,11 @@ ORDER BY src, vox;
 CREATE VIEW subject_occurrences AS
 WITH RECURSIVE occurrences AS (
   SELECT 2 AS depth
+  , polarity
   , n2.ord
   , n1.src
   , n1.vox
-  , n1.start AS initio
+  , n1.start
   , ARRAY[n1.id , n2.id ] AS ids
   , ARRAY[n1.nota , n2.nota ] AS note
   FROM pgwtc.notes n1
@@ -214,17 +215,18 @@ WITH RECURSIVE occurrences AS (
    AND n2.ord = n1.ord + 1
   JOIN pgwtc.subjects s
     ON s.src = n1.src
+  CROSS JOIN (VALUES (-1), (+1)) AS f(polarity)
   WHERE NOT ly2pg.is_rest(n1.nota)
-    AND NOT s.ids[1] = n1.id
-    AND n2.nota   - n1.nota
+    AND (n2.nota  - n1.nota) * polarity
         IS NOT DISTINCT FROM
         s.note[2] - s.note[1]
 UNION ALL
   SELECT o.depth + 1
+  , o.polarity
   , o.ord + 1
   , o.src
   , o.vox
-  , o.initio
+  , o.start
   , o.ids   || n.id
   , o.note  || n.nota
   FROM occurrences o
@@ -234,25 +236,27 @@ UNION ALL
    AND n.ord = o.ord + 1
   JOIN pgwtc.subjects s
     ON s.src = o.src
-  WHERE n.nota - o.note[o.depth]
+  WHERE (n.nota - o.note[o.depth]) * polarity
         IS NOT DISTINCT FROM
         s.note[o.depth + 1] - s.note[o.depth]
 ), longest_occurrences AS (
-  SELECT DISTINCT ON (src, vox, initio)
+  SELECT DISTINCT ON (src, o.vox, o.start)
     *
-  FROM occurrences
-  WHERE depth > 4
-  ORDER BY src, vox, initio, depth DESC
+  FROM occurrences o
+  JOIN metadata m USING (src)
+  WHERE o.depth > greatest(4.0, 0.5 * m.subject_length)
+  ORDER BY src, o.vox, o.start, o.depth DESC
 )
 SELECT
   o.src
 , o.vox
-, o.initio
+, o.start
+, o.polarity
 , o.ord
 , o.depth
 , o.ids
 FROM longest_occurrences o
-ORDER BY src, o.initio, vox;
+ORDER BY src, start, vox;
 
 --
 -- 5. User interface (views)
@@ -264,7 +268,7 @@ SELECT id
 , vox
 , ord
 , lilypond(nota)
-, start @ tempo AS start
+, start @ tempo AS initio
 , durations
 FROM notes
 JOIN metadata USING (src);
@@ -272,7 +276,7 @@ JOIN metadata USING (src);
 CREATE VIEW subjects_pretty AS
 SELECT src
 , vox
-, start @ tempo AS start
+, start @ tempo AS initio
 , clavis
 , lilypond_voice(src, vox, ids[1], array_length(ids, 1))
 FROM subjects;
@@ -281,11 +285,13 @@ CREATE VIEW subject_occurrences_pretty AS
 SELECT
   src
 , vox
-, initio @ tempo AS initio
+, row_number() OVER (PARTITION BY src ORDER BY start) AS ord
+, o.start @ tempo AS initio
+, o.polarity
 , lilypond_voice(src, vox, ids[1], array_length(ids, 1))
 FROM subject_occurrences o
 JOIN pgwtc.metadata USING (src)
-ORDER BY src, o.initio;
+ORDER BY src, o.start;
 
 --
 -- 6. Functions creating lilypond-book sources
