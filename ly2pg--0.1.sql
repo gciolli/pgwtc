@@ -24,6 +24,34 @@
 --     Teaching at the University of Cape Town.
 --
 
+--
+-- 1. Generic code
+--
+
+CREATE FUNCTION int_error(text)
+RETURNS int
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  RAISE EXCEPTION '%', $1;
+  RETURN NULL;
+END;
+$$;
+
+CREATE FUNCTION text_error(text)
+RETURNS text
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  RAISE EXCEPTION '%', $1;
+  RETURN NULL;
+END;
+$$;
+
+--
+-- 2. Base tables and types
+--
+
 CREATE TYPE vox AS ENUM ('soprano', 'alto', 'mezzo', 'tenor', 'bass');
 
 CREATE TABLE tokenized_all
@@ -57,13 +85,47 @@ from the tokenized input. There are two differences with the
 the data that is kept is organized in JSON objects, with meaningful
 keys.';
 
-CREATE TYPE note_name AS enum ('R', 'r', 'c', 'd', 'e', 'f', 'g', 'a', 'b');
-
-CREATE TYPE note AS
-( name note_name
-, alt int
-, oct int
+CREATE TABLE context
+( id serial PRIMARY KEY
+, kind text NOT NULL
+, begins_at int REFERENCES tokenized_all (id)
+, ends_at   int REFERENCES tokenized_all (id)
 );
+
+COMMENT ON TABLE context IS
+
+'This table includes the contexts extracted from the tokenized input';
+
+CREATE OR REPLACE VIEW tokenized AS
+SELECT id, src, vox, token, matched, args
+, jsonb_build_object
+  ( 'token', token
+  , 'args', args
+  ) AS obj
+FROM tokenized_all
+WHERE token NOT IN ('BLANK', 'COMMENT', 'BAR', '[', ']', '(', ')');
+
+COMMENT ON VIEW tokenized IS
+
+'This view exposes the subset of the "tokenized_all" table that is
+relevant for counterpoint analysis';
+
+CREATE TABLE tokens
+( ord int
+, token text
+, regexp text NOT NULL
+, PRIMARY KEY (ord, token)
+);
+
+COPY tokens FROM '/usr/share/postgresql/17/extension/ly2pg-tokens.txt';
+
+COMMENT ON TABLE tokens IS
+
+'This table contains the definition of the available token types';
+
+--
+-- 3. Musical notes and the "notes" table
+--
 
 CREATE TYPE nota AS
 ( tono int
@@ -80,11 +142,12 @@ $$;
 
 CREATE FUNCTION nota(jsonb)
 RETURNS nota
-LANGUAGE sql AS
-$FUNC$
+LANGUAGE SQL
+SET search_path = ly2pg
+AS $BODY$
 SELECT CASE
 WHEN substr($1 ->> 'note', 1, 1) IN ('r', 'R', 's') THEN
-NULL :: ly2pg.nota
+NULL :: nota
 ELSE ROW
 ( CASE substr($1 ->> 'note', 1, 1)
   WHEN 'c' THEN 0
@@ -114,8 +177,59 @@ ELSE ROW
   WHEN 'isis' THEN 2
   ELSE 0
   END
-) :: ly2pg.nota END
-$FUNC$;
+) :: nota END
+$BODY$;
+
+CREATE FUNCTION is_rest(nota)
+RETURNS boolean
+LANGUAGE SQL AS $$
+SELECT ($1).tono IS NULL OR ($1).tono > 127
+$$;
+
+CREATE TABLE notes
+( id int PRIMARY KEY REFERENCES tokenized_all (id)
+, src text NOT NULL
+, vox vox NOT NULL
+, ord int NOT NULL
+, nota nota
+, start int NOT NULL
+, ticks int NOT NULL
+, durations text[] NOT NULL
+);
+
+COMMENT ON TABLE notes IS
+
+'This table includes the notes extracted from the music objects';
+
+--
+-- 4. Lilypond interface
+--
+
+CREATE TYPE lilypond_note_name AS enum ('R', 'r', 'c', 'd', 'e', 'f', 'g', 'a', 'b');
+
+CREATE TYPE lilypond_note AS
+( name lilypond_note_name
+, alt int
+, oct int
+);
+
+CREATE FUNCTION text2lilypond_note (text)
+RETURNS lilypond_note STRICT
+LANGUAGE SQL
+SET search_path = ly2pg
+AS $$
+SELECT ROW
+( CAST (substr($1, 1, 1) AS lilypond_note_name)
+, CASE substr($1, 2)
+  WHEN 'eses' THEN -2
+  WHEN 'es' THEN -1
+  WHEN '' THEN 0
+  WHEN 'is' THEN 1
+  WHEN 'isis' THEN 2
+  END
+, NULL :: int
+) :: lilypond_note
+$$;
 
 CREATE FUNCTION lilypond(nota, ext text DEFAULT '')
 RETURNS text
@@ -158,55 +272,125 @@ $$;
 
 CREATE FUNCTION lilypond(nota[], ext text[] DEFAULT ARRAY[''])
 RETURNS text
-LANGUAGE SQL AS
-$$
-SELECT string_agg(lilypond(ROW(tono, alt) :: ly2pg.nota) || e, ' ')
+LANGUAGE SQL
+SET search_path = ly2pg
+AS $$
+SELECT string_agg(lilypond(ROW(tono, alt) :: nota) || e, ' ')
 FROM unnest($1) AS f(tono, alt)
 , unnest($2) AS g(e)
 $$;
 
-CREATE FUNCTION semitono(nota)
+
+
+CREATE FUNCTION duration2ticks(text)
 RETURNS int
-LANGUAGE sql AS
-$$
-SELECT CASE nota.tono % 7
-WHEN 0 THEN 0
-WHEN 1 THEN 2
-WHEN 2 THEN 3
-WHEN 3 THEN 5
-WHEN 4 THEN 7
-WHEN 5 THEN 8
-WHEN 6 THEN 10
-END + nota.alt + (nota.tono / 7) * 12
-$$;
-
-CREATE FUNCTION is_rest(nota)
-RETURNS boolean
-LANGUAGE SQL AS $$
-SELECT ($1).tono IS NULL OR ($1).tono > 127
-$$;
-
-CREATE FUNCTION parse_note (text)
-RETURNS note STRICT
 LANGUAGE SQL
+SET search_path = ly2pg
 AS $$
-SELECT ROW
-( CAST (substr($1, 1, 1) AS ly2pg.note_name)
-, CASE substr($1, 2)
-  WHEN 'eses' THEN -2
-  WHEN 'es' THEN -1
-  WHEN '' THEN 0
-  WHEN 'is' THEN 1
-  WHEN 'isis' THEN 2
-  END
-, NULL :: int
-) :: ly2pg.note
+SELECT CASE $1
+WHEN '64' THEN   6
+WHEN '32' THEN  12
+WHEN '16' THEN  24
+WHEN  '8' THEN  48
+WHEN  '4' THEN  96
+WHEN  '2' THEN 192
+WHEN  '1' THEN 384
+
+WHEN '64.' THEN   6
+WHEN '32.' THEN  12 +   6
+WHEN '16.' THEN  24 +  12
+WHEN  '8.' THEN  48 +  24
+WHEN  '4.' THEN  96 +  48
+WHEN  '2.' THEN 192 +  96
+WHEN  '1.' THEN 384 + 192
+
+WHEN '64..' THEN   6
+WHEN '32..' THEN  12 +   6
+WHEN '16..' THEN  24 +  12 +  6
+WHEN  '8..' THEN  48 +  24 + 12
+WHEN  '4..' THEN  96 +  48 + 24
+WHEN  '2..' THEN 192 +  96 + 48
+WHEN  '1..' THEN 384 + 192 + 96
+
+WHEN '\breve' THEN 384 * 2
+
+ELSE int_error(format('invalid duration <%s>', $1))
+END $$;
+
+CREATE FUNCTION ticks2duration(int)
+RETURNS text
+LANGUAGE SQL
+SET search_path = ly2pg
+AS $$
+SELECT CASE $1
+
+WHEN   6 THEN '64'
+WHEN  12 THEN '32'
+WHEN  24 THEN '16'
+WHEN  48 THEN  '8'
+WHEN  96 THEN  '4'
+WHEN 192 THEN  '2'
+WHEN 384 THEN  '1'
+
+WHEN   9 THEN '64.'
+WHEN  18 THEN '32.'
+WHEN  36 THEN '16.'
+WHEN  72 THEN  '8.'
+WHEN 144 THEN  '4.'
+WHEN 288 THEN  '2.'
+WHEN 576 THEN  '1.'
+
+ELSE text_error(format('unsupported ticks <%s>', $1))
+END $$;
+
+--
+-- 5. Tonality
+--
+
+CREATE FUNCTION nota_tonal_eq(nota, nota)
+RETURNS boolean
+LANGUAGE SQL STRICT
+SET search_path = ly2pg
+AS $$
+SELECT 
+
+    is_rest($1) AND is_rest($2)
+
+OR
+
+    ($1).tono = ($2).tono
+    AND NOT is_rest($1)
+    AND NOT is_rest($2)
 $$;
+
+CREATE OPERATOR ==
+( FUNCTION = nota_tonal_eq
+, LEFTARG = nota
+, RIGHTARG = nota
+);
+
+CREATE FUNCTION nota_add(nota, int)
+RETURNS nota
+LANGUAGE SQL STRICT
+SET search_path = ly2pg
+AS $$
+SELECT CASE WHEN NOT is_rest($1)
+THEN ROW(($1).tono + $2, ($1).alt) :: nota
+END 
+$$;
+
+CREATE OPERATOR +
+( FUNCTION = nota_add
+, LEFTARG = nota
+, RIGHTARG = int
+);
 
 CREATE FUNCTION nota_sub(nota, nota)
 RETURNS int
-LANGUAGE SQL AS $$
-SELECT CASE WHEN ly2pg.is_rest($1)
+LANGUAGE SQL
+SET search_path = ly2pg
+AS $$
+SELECT CASE WHEN is_rest($1)
 THEN NULL
 ELSE ($1).tono - (($2).tono % 128)
 END
@@ -223,8 +407,49 @@ CREATE OPERATOR -
 , RIGHTARG = nota
 );
 
+CREATE FUNCTION nota_tonal_dist_int(nota, nota)
+RETURNS int
+LANGUAGE SQL
+SET search_path = ly2pg
+AS $$
+SELECT CASE WHEN is_rest($1)
+THEN NULL
+ELSE (($1).tono - (($2).tono % 128)) % 7 + 1
+END
+$$;
+
+CREATE OPERATOR -/
+( FUNCTION = nota_tonal_dist_int
+, LEFTARG = nota
+, RIGHTARG = nota
+);
+
+CREATE TYPE tonal_grade AS ENUM ('tonic', 'supertonic', 'mediant', 'subdominant', 'dominant', 'submediant', 'subtonic');
+
+CREATE FUNCTION nota_tonal_dist_name(nota, nota)
+RETURNS tonal_grade
+LANGUAGE SQL
+SET search_path = ly2pg
+AS $$
+SELECT CASE $1 -/ $2
+WHEN 1 THEN 'tonic'
+WHEN 2 THEN 'supertonic'
+WHEN 3 THEN 'mediant'
+WHEN 4 THEN 'subdominant'
+WHEN 5 THEN 'dominant'
+WHEN 6 THEN 'submediant'
+WHEN 7 THEN 'subtonic'
+END :: i8
+$$;
+
+CREATE OPERATOR -#
+( FUNCTION = nota_tonal_dist_name
+, LEFTARG = nota
+, RIGHTARG = nota
+);
+
 --
--- The "tempo" data type
+-- 6. Tempo
 --
 
 CREATE TYPE tempo AS
@@ -257,11 +482,12 @@ $$;
 CREATE FUNCTION ticks_at_tempo(int, tempo)
 RETURNS text
 LANGUAGE SQL
+SET search_path = ly2pg
 AS $$
 WITH a(bar, beat) AS (
   SELECT
-    ly2pg.tempo2ticks($2) AS bar
-  , ly2pg.tempo2ticks($2) / ($2).num AS beat
+    tempo2ticks($2) AS bar
+  , tempo2ticks($2) / ($2).num AS beat
 )
 SELECT format('%03s:%s'
 , $1 / bar + 1
@@ -277,7 +503,7 @@ CREATE OPERATOR @
 );
 
 --
--- The "clavis" data type
+-- 7. Clavis
 --
 
 CREATE TYPE clavis AS ENUM
@@ -323,176 +549,84 @@ CREATE UNLOGGED TABLE claves
 
 COPY claves FROM '/usr/share/postgresql/17/extension/ly2pg-claves.csv' CSV HEADER;
 
-CREATE FUNCTION clavis2lilypond(clavis)
-RETURNS text
-LANGUAGE SQL AS $BODY$
+CREATE FUNCTION clavis2nota
+( IN clavis
+, nota OUT nota
+, is_maior OUT boolean
+) RETURNS record
+LANGUAGE SQL
+SET search_path = ly2pg
+AS $BODY$
 WITH a AS (
   SELECT id
   , maior
   , diesis
   , lower(id :: text) AS text
   , length(id :: text) - CASE WHEN maior THEN 0 ELSE 1 END AS lm
-  FROM ly2pg.claves
+  FROM claves
   WHERE id = $1
 )
+SELECT nota
+  ( jsonb_strip_nulls
+    ( jsonb_build_object
+      ( 'note'
+      , substr(text,1,1)
+      , 'alteration'
+      , CASE
+        WHEN lm = 2 AND substr(text,lm,1)='#' THEN 'is'
+        WHEN lm = 2 AND substr(text,lm,1)='b' THEN 'es'
+        END
+      )
+    )
+  ), maior
+FROM a
+$BODY$;
 
+CREATE FUNCTION clavis2lilypond
+( IN clavis
+, OUT key text
+, OUT is_maior boolean
+) RETURNS record
+LANGUAGE SQL
+SET search_path = ly2pg
+AS $BODY$
+WITH a AS (
+  SELECT id
+  , maior
+  , diesis
+  , lower(id :: text) AS text
+  , length(id :: text) - CASE WHEN maior THEN 0 ELSE 1 END AS lm
+  FROM claves
+  WHERE id = $1
+)
 SELECT format
-( '%s%s \%s'
-, substr(text,1,1)
-, CASE
-  WHEN lm = 1 THEN ''
-  WHEN lm = 2 AND substr(text,lm,1)='#' THEN 'is'
-  WHEN lm = 2 AND substr(text,lm,1)='b' THEN 'es'
-  END
-, CASE WHEN maior THEN 'major' ELSE 'minor' END
-) FROM a
+  ( '%s%s'
+  , substr(text,1,1)
+  , CASE
+    WHEN lm = 1 THEN ''
+    WHEN lm = 2 AND substr(text,lm,1)='#' THEN 'is'
+    WHEN lm = 2 AND substr(text,lm,1)='b' THEN 'es'
+    END
+  ), maior
+FROM a
 $BODY$;
 
 --
--- The "notes" table
+-- 8. Data processing
 --
-
-CREATE TABLE notes
-( id int PRIMARY KEY REFERENCES tokenized_all (id)
-, src text NOT NULL
-, vox vox NOT NULL
-, ord int NOT NULL
-, nota nota
-, start int NOT NULL
-, ticks int NOT NULL
-, durations text[] NOT NULL
-);
-
-COMMENT ON TABLE notes IS
-
-'This table includes the notes extracted from the music objects';
-
-CREATE TABLE context
-( id serial PRIMARY KEY
-, kind text NOT NULL
-, begins_at int REFERENCES tokenized_all (id)
-, ends_at   int REFERENCES tokenized_all (id)
-);
-
-COMMENT ON TABLE context IS
-
-'This table includes the contexts extracted from the tokenized input';
-
-CREATE OR REPLACE VIEW tokenized AS
-SELECT id, src, vox, token, matched, args
-, jsonb_build_object
-  ( 'token', token
-  , 'args', args
-  ) AS obj
-FROM tokenized_all
-WHERE token NOT IN ('BLANK', 'COMMENT', 'BAR', '[', ']', '(', ')');
-
-COMMENT ON VIEW tokenized IS
-
-'This view exposes the subset of the "tokenized_all" table that is
-relevant for counterpoint analysis';
-
-CREATE TABLE tokens
-( ord int
-, token text
-, regexp text NOT NULL
-, PRIMARY KEY (ord, token)
-);
-
-COPY tokens FROM '/usr/share/postgresql/17/extension/ly2pg-tokens.txt';
-
-COMMENT ON TABLE tokens IS
-
-'This table contains the definition of the available token types';
-
-CREATE FUNCTION int_error(text)
-RETURNS int
-LANGUAGE plpgsql
-AS $$
-BEGIN
-  RAISE EXCEPTION '%', $1;
-  RETURN NULL;
-END;
-$$;
-
-CREATE FUNCTION text_error(text)
-RETURNS text
-LANGUAGE plpgsql
-AS $$
-BEGIN
-  RAISE EXCEPTION '%', $1;
-  RETURN NULL;
-END;
-$$;
-
-CREATE FUNCTION duration2ticks(text)
-RETURNS int
-LANGUAGE SQL AS $$
-SELECT CASE $1
-WHEN '64' THEN   6
-WHEN '32' THEN  12
-WHEN '16' THEN  24
-WHEN  '8' THEN  48
-WHEN  '4' THEN  96
-WHEN  '2' THEN 192
-WHEN  '1' THEN 384
-
-WHEN '64.' THEN   6
-WHEN '32.' THEN  12 +   6
-WHEN '16.' THEN  24 +  12
-WHEN  '8.' THEN  48 +  24
-WHEN  '4.' THEN  96 +  48
-WHEN  '2.' THEN 192 +  96
-WHEN  '1.' THEN 384 + 192
-
-WHEN '64..' THEN   6
-WHEN '32..' THEN  12 +   6
-WHEN '16..' THEN  24 +  12 +  6
-WHEN  '8..' THEN  48 +  24 + 12
-WHEN  '4..' THEN  96 +  48 + 24
-WHEN  '2..' THEN 192 +  96 + 48
-WHEN  '1..' THEN 384 + 192 + 96
-
-WHEN '\breve' THEN 384 * 2
-
-ELSE ly2pg.int_error(format('invalid duration <%s>', $1))
-END $$;
-
-CREATE FUNCTION ticks2duration(int)
-RETURNS text
-LANGUAGE SQL AS $$
-SELECT CASE $1
-
-WHEN   6 THEN '64'
-WHEN  12 THEN '32'
-WHEN  24 THEN '16'
-WHEN  48 THEN  '8'
-WHEN  96 THEN  '4'
-WHEN 192 THEN  '2'
-WHEN 384 THEN  '1'
-
-WHEN   9 THEN '64.'
-WHEN  18 THEN '32.'
-WHEN  36 THEN '16.'
-WHEN  72 THEN  '8.'
-WHEN 144 THEN  '4.'
-WHEN 288 THEN  '2.'
-WHEN 576 THEN  '1.'
-
-ELSE ly2pg.text_error(format('unsupported ticks <%s>', $1))
-END $$;
 
 CREATE PROCEDURE extract_notes(v_src text, v_vox vox)
 LANGUAGE plpgsql
+SET search_path = ly2pg
 AS $BODY$
 DECLARE
 --  context_id int;
   context_ids int[] := '{}';
   context_kinds text[] := '{}';
 
-  c SCROLL CURSOR (s text, v ly2pg.vox) FOR
+  c SCROLL CURSOR (s text, v vox) FOR
     SELECT id, obj
-    FROM ly2pg.objectified
+    FROM objectified
     WHERE src = v_src
       AND vox = v_vox
     ORDER BY id;
@@ -506,14 +640,14 @@ DECLARE
 
   -- Variables capturing Lilypond state
   absolute_pitch_mode boolean;
-  key_note ly2pg.note;
+  key_note note;
   key_major boolean;
   time_num int;
   time_den int;
   current_note_start int := 0;
   current_note_ord int := 1;
-  current_note ly2pg.nota;
-  previous_note ly2pg.nota;
+  current_note lilypond_note;
+  previous_note lilypond_note;
   previous_note_id int := NULL;
   note_durations text[] := '{}';
   ticks int := 0;
@@ -549,17 +683,17 @@ BEGIN
     WHEN x.obj ? 'note'
     THEN
       CONTINUE WHEN context_kinds != ARRAY['{'];
-      current_note   := ly2pg.nota(x.obj);
+      current_note   := lilypond_note(x.obj);
       IF current_note IS NULL THEN
         current_note := ROW
         ( (previous_note).tono + 128
         , (previous_note).alt
-        ) :: ly2pg.nota;
+        ) :: lilypond_note;
       ELSE
         previous_note := current_note;
       END IF;
-      note_durations := note_durations           || (x.obj ->> 'duration');
-      ticks          := ticks + ly2pg.duration2ticks(x.obj ->> 'duration');
+      note_durations := note_durations     || (x.obj ->> 'duration');
+      ticks          := ticks + duration2ticks(x.obj ->> 'duration');
       FETCH c INTO x1;
       MOVE PRIOR FROM c;
       IF x1.obj ->> 0 = '~'
@@ -577,7 +711,7 @@ BEGIN
         NULL;
       ELSE
         -- do not tie; emit the note instead
-        INSERT INTO ly2pg.notes
+        INSERT INTO notes
         ( id
         , src
         , vox
@@ -631,7 +765,6 @@ BEGIN
       FETCH c INTO x1;
       time_num := CAST (x1.obj ->> 0 AS int);
       time_den := CAST (x1.obj ->> 1 AS int);
-      -- TODO: use time_num,time_den
 
     --
     -- (V) keys with 2 arguments
@@ -642,7 +775,7 @@ BEGIN
     THEN
       FETCH c INTO x1;
       FETCH c INTO x2;
-      key_note := ly2pg.parse_note(x1.obj ->> 'note');
+      key_note := text2lilypond_note(x1.obj ->> 'note');
       key_major := x2.obj ->> 'key' = 'major';
 
     --
@@ -703,6 +836,7 @@ COMMENT ON PROCEDURE extract_notes IS
 
 CREATE PROCEDURE detect_contexts(v_src text, v_vox vox)
 LANGUAGE plpgsql
+SET search_path = ly2pg
 AS $BODY$
 DECLARE
   i int;
@@ -717,7 +851,7 @@ BEGIN
   RAISE DEBUG 'CP300 detect_contexts';
   FOR i, o, t IN
     SELECT id, obj, obj ->> 0
-    FROM ly2pg.objectified m
+    FROM objectified m
     WHERE m.src = v_src
       AND m.vox = v_vox
     ORDER BY m.id
@@ -726,7 +860,7 @@ BEGIN
 
     WHEN t IN ('{', '<', '<<')
     THEN
-      INSERT INTO ly2pg.context(kind, begins_at)
+      INSERT INTO context(kind, begins_at)
         VALUES (t, i)
         RETURNING id INTO STRICT context_id;
       context_ids   := array_append(context_ids, context_id);
@@ -739,7 +873,7 @@ BEGIN
         OR   (matching_token = '<'  AND t = '>' )
         OR   (matching_token = '<<' AND t = '>>')
         , 'incorrect context nesting';
-      UPDATE ly2pg.context
+      UPDATE context
         SET ends_at = i
         WHERE id = context_ids[array_length(context_ids, 1)];
       context_ids   := trim_array(context_ids,   1);
@@ -763,14 +897,15 @@ and verifies that they are not incorrectly nested';
 
 CREATE PROCEDURE build_objects(v_src text, v_vox vox)
 LANGUAGE plpgsql
+SET search_path = ly2pg
 AS $BODY$
 DECLARE
-  x ly2pg.tokenized;
+  x tokenized;
 BEGIN
   RAISE DEBUG 'CP200 build_objects';
   FOR x IN
     SELECT *
-    FROM ly2pg.tokenized m
+    FROM tokenized m
     WHERE m.src = v_src
       AND m.vox = v_vox
     ORDER BY m.id
@@ -783,7 +918,7 @@ BEGIN
 
     WHEN x.token IN ('FALSE', 'TRUE')
     THEN
-      INSERT INTO ly2pg.objectified(id, src, vox, obj)
+      INSERT INTO objectified(id, src, vox, obj)
       SELECT x.id
       , v_src
       , v_vox
@@ -796,7 +931,7 @@ BEGIN
 
     WHEN x.token IN ('INT')
     THEN
-      INSERT INTO ly2pg.objectified(id, src, vox, obj)
+      INSERT INTO objectified(id, src, vox, obj)
       SELECT x.id
       , v_src
       , v_vox
@@ -809,7 +944,7 @@ BEGIN
 
     WHEN x.token IN ('<', '>', '{', '}', '<<', '>>', '~', '=')
     THEN
-      INSERT INTO ly2pg.objectified(id, src, vox, obj)
+      INSERT INTO objectified(id, src, vox, obj)
       SELECT x.id
       , v_src
       , v_vox
@@ -822,7 +957,7 @@ BEGIN
 
     WHEN x.token IN ('NOTE')
     THEN
-      INSERT INTO ly2pg.objectified(id, src, vox, obj)
+      INSERT INTO objectified(id, src, vox, obj)
       SELECT x.id
       , v_src
       , v_vox
@@ -841,7 +976,7 @@ BEGIN
 
     WHEN x.token IN ('MREST')
     THEN
-      INSERT INTO ly2pg.objectified(id, src, vox, obj)
+      INSERT INTO objectified(id, src, vox, obj)
       SELECT x.id
       , v_src
       , v_vox
@@ -861,7 +996,7 @@ BEGIN
 
     WHEN x.token IN ('KEY', 'ID', 'STR', 'REF')
     THEN
-      INSERT INTO ly2pg.objectified(id, src, vox, obj)
+      INSERT INTO objectified(id, src, vox, obj)
       SELECT x.id
       , v_src
       , v_vox
@@ -874,7 +1009,7 @@ BEGIN
 
     WHEN x.token IN ('TIME')
     THEN
-      INSERT INTO ly2pg.objectified(id, src, vox, obj)
+      INSERT INTO objectified(id, src, vox, obj)
       SELECT x.id
       , v_src
       , v_vox
@@ -890,7 +1025,7 @@ BEGIN
 
     WHEN x.token IN ('SCM')
     THEN
-      INSERT INTO ly2pg.objectified(id, src, vox, obj)
+      INSERT INTO objectified(id, src, vox, obj)
       SELECT x.id
       , v_src
       , v_vox
@@ -911,7 +1046,7 @@ BEGIN
     --
 
     ELSE
-      INSERT INTO ly2pg.objectified(id, src, vox, obj)
+      INSERT INTO objectified(id, src, vox, obj)
       SELECT x.id
       , v_src
       , v_vox
@@ -937,6 +1072,7 @@ into a single object whenever necessary';
 
 CREATE PROCEDURE tokenize (v_src text, v_vox vox, v_cnt text)
 LANGUAGE plpgsql
+SET search_path = ly2pg
 AS $BODY$
 DECLARE
   n int := length(v_cnt);
@@ -952,14 +1088,14 @@ BEGIN
     x := substr(v_cnt,i,MAX_MATCH);
     EXIT WHEN x = '';
     FOR t, r IN
-      SELECT token, regexp FROM ly2pg.tokens
+      SELECT token, regexp FROM tokens
     LOOP
       m := regexp_match(x, '^(' || r || ')');
       EXIT WHEN m IS NOT NULL;
     END LOOP;
     ASSERT m IS NOT NULL, format(E'unmatched code:\n%s', x);
     i := i + length(m[1]);
-    INSERT INTO ly2pg.tokenized_all(src, vox, token, matched, args)
+    INSERT INTO tokenized_all(src, vox, token, matched, args)
     VALUES (v_src, v_vox, t, m[1], m[2:]);
     COMMIT;
   END LOOP;
@@ -976,6 +1112,7 @@ CREATE PROCEDURE process
 , vox vox
 , cnt text
 ) LANGUAGE plpgsql
+SET search_path = ly2pg
 AS $BODY$
 BEGIN
   RAISE NOTICE 'Processing %:%', src, vox;

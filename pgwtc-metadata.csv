@@ -1,49 +1,49 @@
-bwv,clavis,tempo,subject_length
-BWV846,"C","4/4", 14
-BWV847,"Cm","4/4", 0
-BWV848,"C#","4/4", 0
-BWV849,"C#m","2/2", 16
-BWV850,"D","4/4", 0
-BWV851,"Dm","3/4", 0
-BWV852,"Eb","4/4", 0
-BWV853,"D#m","4/4", 12
-BWV854,"E","4/4", 0
-BWV855,"Em","3/4", 26
-BWV856,"F","3/8", 0
-BWV857,"Fm","4/4", 11
-BWV858,"F#","4/4", 17
-BWV859,"F#m","6/4", 18
-BWV860,"G","6/8", 0
-BWV861,"Gm","4/4", 13
-BWV862,"Ab","4/4", 7
-BWV863,"G#m","4/4", 15
-BWV864,"A","9/8", 11
-BWV865,"Am","4/4", 0
-BWV866,"Bb","3/4", 38
-BWV867,"Bbm","2/2", 11
-BWV868,"B","4/4", 14
-BWV869,"Bm","4/4", 0
-BWV870,"C","2/4", 0
-BWV871,"Cm","4/4", 0
-BWV872,"C#","4/4", 0
-BWV873,"C#m","12/16", 0
-BWV874,"D","2/2", 9
-BWV875,"Dm","4/4", 0
-BWV876,"Eb","2/2", 16
-BWV877,"D#m","4/4", 0
-BWV878,"E","2/1", 5
-BWV879,"Em","2/2", 0
-BWV880,"F","6/16", 0
-BWV881,"Fm","2/4", 0
-BWV882,"F#","2/2", 0
-BWV883,"F#m","4/4", 15
-BWV884,"G","3/8", 0
-BWV885,"Gm","3/4", 21
-BWV886,"Ab","4/4", 0
-BWV887,"G#m","6/8", 0
-BWV888,"A","4/4", 19
-BWV889,"Am","4/4", 9
-BWV890,"Bb","3/4", 24
-BWV891,"Bbm","3/2", 30
-BWV892,"B","2/2", 7
-BWV893,"Bm","3/8", 0
+bwv,clavis,tempo,subject_length,answer
+BWV846,"C","4/4",14,real
+BWV847,"Cm","4/4",0,
+BWV848,"C#","4/4",0,
+BWV849,"C#m","2/2",5,real
+BWV850,"D","4/4",0,
+BWV851,"Dm","3/4",0,
+BWV852,"Eb","4/4",0,
+BWV853,"D#m","4/4",12,dominant tonal
+BWV854,"E","4/4",0,
+BWV855,"Em","3/4",26,real
+BWV856,"F","3/8",0,
+BWV857,"Fm","4/4",11,dominant tonal
+BWV858,"F#","4/4",17,dominant tonal
+BWV859,"F#m","6/4",18,real
+BWV860,"G","6/8",0,
+BWV861,"Gm","4/4",13,dominant tonal
+BWV862,"Ab","4/4",7,dominant tonal
+BWV863,"G#m","4/4",15,subdominant tonal
+BWV864,"A","9/8",11,subdominant tonal
+BWV865,"Am","4/4",0,
+BWV866,"Bb","3/4",38,dominant tonal
+BWV867,"Bbm","2/2",11,real
+BWV868,"B","4/4",14,subdominant tonal
+BWV869,"Bm","4/4",0,
+BWV870,"C","2/4",0,
+BWV871,"Cm","4/4",0,
+BWV872,"C#","4/4",0,
+BWV873,"C#m","12/16",0,
+BWV874,"D","2/2",9,real
+BWV875,"Dm","4/4",0,
+BWV876,"Eb","2/2",16,dominant tonal
+BWV877,"D#m","4/4",0,
+BWV878,"E","2/1",5,real
+BWV879,"Em","2/2",0,
+BWV880,"F","6/16",0,
+BWV881,"Fm","2/4",0,
+BWV882,"F#","2/2",0,
+BWV883,"F#m","4/4",15,dominant tonal
+BWV884,"G","3/8",0,
+BWV885,"Gm","3/4",21,dominant tonal
+BWV886,"Ab","4/4",0,
+BWV887,"G#m","6/8",0,
+BWV888,"A","4/4",19,real
+BWV889,"Am","4/4",9,dominant tonal
+BWV890,"Bb","3/4",24,dominant tonal
+BWV891,"Bbm","3/2",30,real
+BWV892,"B","2/2",7,real
+BWV893,"Bm","3/8",0,
