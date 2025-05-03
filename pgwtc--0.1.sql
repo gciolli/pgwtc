@@ -366,9 +366,7 @@ CREATE VIEW subject_occurrences_pretty AS
 SELECT src
 , o.vox
 , o.start @ m.tempo AS initio
-, pgwtc.lilypond_voice(src, o.vox, o.ids[1], array_length(o.ids,1))
-, o.rhythm
-, o.pattern_rhythm
-FROM pgwtc.subject_occurrences o
-JOIN pgwtc.metadata m USING (src)
+, lilypond_voice(src, o.vox, o.ids[1], array_length(o.ids,1))
+FROM subject_occurrences o
+JOIN metadata m USING (src)
 ORDER BY src, o.start;

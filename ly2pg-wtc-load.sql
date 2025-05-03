@@ -7,8 +7,6 @@
 DROP EXTENSION IF EXISTS ly2pg CASCADE;
 CREATE EXTENSION ly2pg;
 
---SET search_path = ly2pg, public;
-
 --
 -- 1. Load all the source files into a sequence of tokens.
 --

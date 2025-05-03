@@ -617,16 +617,15 @@ $BODY$;
 
 CREATE PROCEDURE extract_notes(v_src text, v_vox vox)
 LANGUAGE plpgsql
-SET search_path = ly2pg
 AS $BODY$
 DECLARE
 --  context_id int;
   context_ids int[] := '{}';
   context_kinds text[] := '{}';
 
-  c SCROLL CURSOR (s text, v vox) FOR
+  c SCROLL CURSOR (s text, v ly2pg.vox) FOR
     SELECT id, obj
-    FROM objectified
+    FROM ly2pg.objectified
     WHERE src = v_src
       AND vox = v_vox
     ORDER BY id;
@@ -640,14 +639,14 @@ DECLARE
 
   -- Variables capturing Lilypond state
   absolute_pitch_mode boolean;
-  key_note note;
+  key_note ly2pg.nota;
   key_major boolean;
   time_num int;
   time_den int;
   current_note_start int := 0;
   current_note_ord int := 1;
-  current_note lilypond_note;
-  previous_note lilypond_note;
+  current_note ly2pg.nota;
+  previous_note ly2pg.nota;
   previous_note_id int := NULL;
   note_durations text[] := '{}';
   ticks int := 0;
@@ -683,17 +682,17 @@ BEGIN
     WHEN x.obj ? 'note'
     THEN
       CONTINUE WHEN context_kinds != ARRAY['{'];
-      current_note   := lilypond_note(x.obj);
+      current_note   := ly2pg.nota(x.obj);
       IF current_note IS NULL THEN
         current_note := ROW
         ( (previous_note).tono + 128
         , (previous_note).alt
-        ) :: lilypond_note;
+        ) :: ly2pg.nota;
       ELSE
         previous_note := current_note;
       END IF;
-      note_durations := note_durations     || (x.obj ->> 'duration');
-      ticks          := ticks + duration2ticks(x.obj ->> 'duration');
+      note_durations := note_durations           || (x.obj ->> 'duration');
+      ticks          := ticks + ly2pg.duration2ticks(x.obj ->> 'duration');
       FETCH c INTO x1;
       MOVE PRIOR FROM c;
       IF x1.obj ->> 0 = '~'
@@ -711,7 +710,7 @@ BEGIN
         NULL;
       ELSE
         -- do not tie; emit the note instead
-        INSERT INTO notes
+        INSERT INTO ly2pg.notes
         ( id
         , src
         , vox
@@ -775,7 +774,7 @@ BEGIN
     THEN
       FETCH c INTO x1;
       FETCH c INTO x2;
-      key_note := text2lilypond_note(x1.obj ->> 'note');
+      key_note := ly2pg.nota(x1.obj -> 'note');
       key_major := x2.obj ->> 'key' = 'major';
 
     --
@@ -1072,7 +1071,6 @@ into a single object whenever necessary';
 
 CREATE PROCEDURE tokenize (v_src text, v_vox vox, v_cnt text)
 LANGUAGE plpgsql
-SET search_path = ly2pg
 AS $BODY$
 DECLARE
   n int := length(v_cnt);
@@ -1088,14 +1086,14 @@ BEGIN
     x := substr(v_cnt,i,MAX_MATCH);
     EXIT WHEN x = '';
     FOR t, r IN
-      SELECT token, regexp FROM tokens
+      SELECT token, regexp FROM ly2pg.tokens
     LOOP
       m := regexp_match(x, '^(' || r || ')');
       EXIT WHEN m IS NOT NULL;
     END LOOP;
     ASSERT m IS NOT NULL, format(E'unmatched code:\n%s', x);
     i := i + length(m[1]);
-    INSERT INTO tokenized_all(src, vox, token, matched, args)
+    INSERT INTO ly2pg.tokenized_all(src, vox, token, matched, args)
     VALUES (v_src, v_vox, t, m[1], m[2:]);
     COMMIT;
   END LOOP;

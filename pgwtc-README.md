@@ -33,9 +33,9 @@ and then you can connect to PostgreSQL as superuser and issue
 
 which will automatically install the `ly2pg` extension as a
 dependency:
-	
-	NOTICE: installing required extension "ly2pg"
-	CREATE EXTENSION
+    
+    NOTICE: installing required extension "ly2pg"
+    CREATE EXTENSION
 
 ## Notes
 
@@ -49,7 +49,7 @@ First, query some notes as in the following example:
 
 You should get the following output:
 
-     id |  src   | vox  | ord | lilypond |   start   | durations 
+     id |  src   | vox  | ord | lilypond |  initio   | durations 
     ----+--------+------+-----+----------+-----------+-----------
      20 | BWV846 | alto |   1 | r        |   1:1.000 | {8}
      22 | BWV846 | alto |   2 | c'       |   1:1.500 | {8}
@@ -69,6 +69,8 @@ You should get the following output:
      56 | BWV846 | alto |  16 | f'       |   2:3.250 | {16}
     (16 rows)
 
+gianni=# 
+
 ## Metadata
 
 The `pgwtc.metadata` table contains some data that was transcribed
@@ -76,11 +78,11 @@ from the literature (e.g. [1]), as in this example:
 
     SELECT *
     FROM pgwtc.metadata
-	WHERE src = 'BWV846';
+    WHERE src = 'BWV846';
 
-      src   | clavis | tempo | subject_length 
-    --------+--------+-------+----------------
-     BWV846 | C      | (4,4) |             14
+      src   | clavis | tempo | subject_length | answer 
+    --------+--------+-------+----------------+--------
+     BWV846 | C      | (4,4) |             14 | real
     (1 row)
 
 The number 14 refers to the fact that the subject of BWV846 is
@@ -96,7 +98,7 @@ in a easier aggregate format, combined with some metadata:
     FROM pgwtc.subjects_pretty
     WHERE src = 'BWV846';
     
-      src   | vox  |   start   | clavis |                            lilypond_voice                             
+      src   | vox  |  initio   | clavis |                            lilypond_voice                             
     --------+------+-----------+--------+-----------------------------------------------------------------------
      BWV846 | alto |   1:1.500 | C      | c'8 d'8 e'8 f'8. g'32 f'32 e'8 a'8 d'8 g'8 ~ g'16 a'16 g'16 f'16 e'16
     (1 row)
@@ -116,21 +118,18 @@ the subjects for each fugue, in a similar format:
     FROM pgwtc.subject_occurrences_pretty
     WHERE src = 'BWV846';
 
-      src   |   vox   |  initio   |                                    lilypond_voice                                     
-    --------+---------+-----------+---------------------------------------------------------------------------------------
+      src   |   vox   |  initio   |                                    lilypond_voice                                    
+    --------+---------+-----------+--------------------------------------------------------------------------------------
+     BWV846 | alto    |   1:1.500 | c'8 d'8 e'8 f'8. g'32 f'32 e'8 a'8 d'8 g'8 ~ g'16 a'16 g'16 f'16 e'16
      BWV846 | soprano |   2:3.500 | g'8 a'8 b'8 c''8. d''32 c''32 b'8 e''8 a'8 d''8 ~ d''16 e''16 d''16 c''16 b'16
      BWV846 | tenor   |   4:1.500 | g8 a8 b8 c'8. d'32 c'32 b8 e'8 a8 d'8 ~ d'16 e'16 d'16 c'16 b8
      BWV846 | bass    |   5:3.500 | c8 d8 e8 f8. g32 f32 e8 a8 d8 g8 ~ g16 a16 g16 f16 e16
      BWV846 | soprano |   7:1.500 | c''8 d''8 e''8 f''8. g''32 f''32 e''8 a''8 d''8 g''8 ~ g''16 a''16 g''16 f''16 e''8
      BWV846 | tenor   |   7:2.500 | g8 a8 b8 c'8. d'32 c'32 b8 e'8 a8 d'8 ~ d'16 e'16 d'16 c'16 b8
-     BWV846 | alto    |   9:1.500 | g'8 a'8 b'8 c''8. d''32 c''32 b'8 e''8 a'8 d''8 ~ d''16 e''16 d''16 c''16 b'8 r8 ~ r8
+     BWV846 | alto    |   9:1.500 | g'8 a'8 b'8 c''8. d''32 c''32 b'8 e''8 a'8 d''8 ~ d''16 e''16 d''16 c''16 b'8
      BWV846 | bass    |  10:3.500 | g,8 a,8 b,8 c8. d32 c32 b,8 e8 a,8 d8 ~ d16 e16 d16 c16 b,8
+     BWV846 | alto    |  10:4.500 | d'8 e'8 fis'8 g'8. a'32 g'32 fis'8 b'8 e'8 a'8 ~ a'16 b'16 a'16 gis'16 fis'8
     (...)
-
-TODO: repeat the query after properly removing short subject
-fragments.
-
-TODO: choose one between "initio" and "start".
 
 TODO: subject occurrences should also be displayed with
 `lilypond-book`
