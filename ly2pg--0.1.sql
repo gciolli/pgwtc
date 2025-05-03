@@ -183,7 +183,7 @@ $BODY$;
 CREATE FUNCTION is_rest(nota)
 RETURNS boolean
 LANGUAGE SQL AS $$
-SELECT ($1).tono IS NULL OR ($1).tono > 127
+SELECT $1 IS NULL OR ($1).tono IS NULL OR ($1).tono > 127
 $$;
 
 CREATE TABLE notes
@@ -349,7 +349,7 @@ END $$;
 
 CREATE FUNCTION nota_tonal_eq(nota, nota)
 RETURNS boolean
-LANGUAGE SQL STRICT
+LANGUAGE SQL
 SET search_path = ly2pg
 AS $$
 SELECT 
