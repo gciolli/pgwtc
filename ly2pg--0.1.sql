@@ -48,6 +48,16 @@ BEGIN
 END;
 $$;
 
+CREATE FUNCTION int_array_shift
+( ints  INOUT int[]
+, ind   IN    int
+, delta IN    int
+) LANGUAGE SQL AS
+$BODY$
+SELECT array_agg(f.x + CASE n WHEN ind THEN delta ELSE 0 END ORDER BY n)
+FROM unnest($1) WITH ORDINALITY AS f(x,n)
+$BODY$;
+
 --
 -- 2. Base tables and types
 --
@@ -515,6 +525,25 @@ SELECT format
   ), maior
 FROM a
 $BODY$;
+
+--
+-- This operator returns an integer between 0 and 6, to indicate what
+-- grade is the note with respect to that clavis.
+--
+
+CREATE OR REPLACE FUNCTION nota_at_clavis(nota, clavis)
+RETURNS int
+LANGUAGE SQL
+AS $BODY$
+SELECT (($1).tono - (nota).tono + 126) % 7
+FROM ly2pg.clavis2nota($2) AS f(nota, is_maior)
+$BODY$;
+
+CREATE OPERATOR @
+( FUNCTION = nota_at_clavis
+, LEFTARG = nota
+, RIGHTARG = clavis
+);
 
 --
 -- 8. Data processing

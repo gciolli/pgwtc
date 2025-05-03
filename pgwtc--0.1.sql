@@ -211,22 +211,58 @@ JOIN first_notes USING (src, vox)
 ORDER BY src, vox;
 
 CREATE VIEW subject_occurrences AS
-WITH RECURSIVE subjects_and_deltas AS (
-  SELECT s.*
-  , f.o AS pattern_id
-  , array_fill(f.o, ARRAY[array_length(note,1)]) AS deltas
-  FROM pgwtc.subjects s
-  , generate_series(-35,35) AS f(o)
+WITH RECURSIVE subjects_and_deltas_real AS (
+
   --
   -- We transpose the subjects 5 octaves in either direction, which
   -- seems more than enough.
-  --
-  -- TODO: adjust deltas to cover tonal answers
   --
   -- TODO: add new deltas to cover for inversions
   --
   -- TODO: adjust rhythm prolations
   --
+
+  SELECT s.src
+  , s.note
+  , s.rhythm
+  , s.clavis
+  , format('R%s', f.o) AS pattern_id
+  , f.o AS delta
+  , array_fill(f.o, ARRAY[array_length(note,1)]) AS deltas
+  FROM pgwtc.subjects s
+  , generate_series(-35,35) AS f(o)
+), subjects_and_deltas_tonal AS (
+
+  --
+  -- In this query we generate all the possible "tonal adjustments",
+  -- by transposing a prominent note by one grade to the tonic, when
+  -- possible.
+  --
+  -- The pattern id "Tx/y" means that pattern Ry was tonally adjusted
+  -- by moving the x-th note, e.g. T1/-4 is the same as R-4 with the
+  -- first note tonally adjusted.
+  --
+  -- Here we transpose a prominent dominant note when the tonal answer
+  -- is the subject transposed by a fifth.
+
+  SELECT src
+  , note
+  , rhythm
+  , clavis
+  , format('T1/%s', delta) AS pattern_id
+  , delta
+  , int_array_shift(deltas, 1, -1)
+  FROM subjects_and_deltas_real
+  WHERE (delta + 35) % 7 = 4 -- transposed by a fifth
+    AND note[1] @ clavis = 4 -- starting with the dominant
+    AND false
+  -- TODO: perhaps filter by metadata
+), subjects_and_deltas AS (
+  SELECT *
+  FROM subjects_and_deltas_real
+  UNION ALL
+  SELECT *
+  FROM subjects_and_deltas_tonal
 ), patterns_unnested AS (
   SELECT s.src
   , s.pattern_id
