@@ -147,7 +147,7 @@ SET search_path = ly2pg
 AS $BODY$
 SELECT CASE
 WHEN substr($1 ->> 'note', 1, 1) IN ('r', 'R', 's') THEN
-NULL :: nota
+ROW(NULL,0) :: nota
 ELSE ROW
 ( CASE substr($1 ->> 'note', 1, 1)
   WHEN 'c' THEN 0
@@ -179,12 +179,6 @@ ELSE ROW
   END
 ) :: nota END
 $BODY$;
-
-CREATE FUNCTION is_rest(nota)
-RETURNS boolean
-LANGUAGE SQL AS $$
-SELECT $1 IS NULL OR ($1).tono IS NULL OR ($1).tono > 127
-$$;
 
 CREATE TABLE notes
 ( id int PRIMARY KEY REFERENCES tokenized_all (id)
@@ -236,7 +230,7 @@ RETURNS text
 LANGUAGE SQL AS
 $$
 SELECT CASE
-WHEN COALESCE(($1).tono, 128) > 127 THEN format ('r%s', $2)
+WHEN ($1).tono IS NULL THEN format ('r%s', $2)
 ELSE
 format('%s%s%s%s'
 , CASE ($1).tono % 7
@@ -279,8 +273,6 @@ SELECT string_agg(lilypond(ROW(tono, alt) :: nota) || e, ' ')
 FROM unnest($1) AS f(tono, alt)
 , unnest($2) AS g(e)
 $$;
-
-
 
 CREATE FUNCTION duration2ticks(text)
 RETURNS int
@@ -347,105 +339,18 @@ END $$;
 -- 5. Tonality
 --
 
-CREATE FUNCTION nota_tonal_eq(nota, nota)
-RETURNS boolean
-LANGUAGE SQL
-SET search_path = ly2pg
-AS $$
-SELECT 
-
-    is_rest($1) AND is_rest($2)
-
-OR
-
-    ($1).tono = ($2).tono
-    AND NOT is_rest($1)
-    AND NOT is_rest($2)
-$$;
-
-CREATE OPERATOR ==
-( FUNCTION = nota_tonal_eq
-, LEFTARG = nota
-, RIGHTARG = nota
-);
-
 CREATE FUNCTION nota_add(nota, int)
 RETURNS nota
 LANGUAGE SQL STRICT
 SET search_path = ly2pg
 AS $$
-SELECT CASE WHEN NOT is_rest($1)
-THEN ROW(($1).tono + $2, ($1).alt) :: nota
-END 
+SELECT ROW(($1).tono + $2, ($1).alt) :: nota
 $$;
 
 CREATE OPERATOR +
 ( FUNCTION = nota_add
 , LEFTARG = nota
 , RIGHTARG = int
-);
-
-CREATE FUNCTION nota_sub(nota, nota)
-RETURNS int
-LANGUAGE SQL
-SET search_path = ly2pg
-AS $$
-SELECT CASE WHEN is_rest($1)
-THEN NULL
-ELSE ($1).tono - (($2).tono % 128)
-END
-$$;
-
-COMMENT ON FUNCTION nota_sub(nota,nota) IS
-
-'This function works on both tones and rests, as it is aware of the
-encoding of rests that remembers the pitch of the previous note.';
-
-CREATE OPERATOR -
-( FUNCTION = nota_sub
-, LEFTARG = nota
-, RIGHTARG = nota
-);
-
-CREATE FUNCTION nota_tonal_dist_int(nota, nota)
-RETURNS int
-LANGUAGE SQL
-SET search_path = ly2pg
-AS $$
-SELECT CASE WHEN is_rest($1)
-THEN NULL
-ELSE (($1).tono - (($2).tono % 128)) % 7 + 1
-END
-$$;
-
-CREATE OPERATOR -/
-( FUNCTION = nota_tonal_dist_int
-, LEFTARG = nota
-, RIGHTARG = nota
-);
-
-CREATE TYPE tonal_grade AS ENUM ('tonic', 'supertonic', 'mediant', 'subdominant', 'dominant', 'submediant', 'subtonic');
-
-CREATE FUNCTION nota_tonal_dist_name(nota, nota)
-RETURNS tonal_grade
-LANGUAGE SQL
-SET search_path = ly2pg
-AS $$
-SELECT CASE $1 -/ $2
-WHEN 1 THEN 'tonic'
-WHEN 2 THEN 'supertonic'
-WHEN 3 THEN 'mediant'
-WHEN 4 THEN 'subdominant'
-WHEN 5 THEN 'dominant'
-WHEN 6 THEN 'submediant'
-WHEN 7 THEN 'subtonic'
-END :: i8
-$$;
-
-CREATE OPERATOR -#
-( FUNCTION = nota_tonal_dist_name
-, LEFTARG = nota
-, RIGHTARG = nota
 );
 
 --
@@ -685,8 +590,8 @@ BEGIN
       current_note   := ly2pg.nota(x.obj);
       IF current_note IS NULL THEN
         current_note := ROW
-        ( (previous_note).tono + 128
-        , (previous_note).alt
+        ( NULL
+        , 0
         ) :: ly2pg.nota;
       ELSE
         previous_note := current_note;

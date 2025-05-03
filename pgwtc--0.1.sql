@@ -211,21 +211,38 @@ JOIN first_notes USING (src, vox)
 ORDER BY src, vox;
 
 CREATE VIEW subject_occurrences AS
-WITH RECURSIVE patterns AS (
+WITH RECURSIVE subjects_and_deltas AS (
   SELECT s.*
-  , array_fill(f.o, ARRAY[array_length(note,1)]) AS offsets
+  , f.o AS pattern_id
+  , array_fill(f.o, ARRAY[array_length(note,1)]) AS deltas
   FROM pgwtc.subjects s
   , generate_series(-35,35) AS f(o)
   --
   -- We transpose the subjects 5 octaves in either direction, which
   -- seems more than enough.
   --
-  -- TODO: adjust offsets to cover tonal answers
+  -- TODO: adjust deltas to cover tonal answers
   --
-  -- TODO: add new offsets to cover for inversions
+  -- TODO: add new deltas to cover for inversions
   --
   -- TODO: adjust rhythm prolations
   --
+), patterns_unnested AS (
+  SELECT s.src
+  , s.pattern_id
+  , f.ord
+  , s.note[ord] + f.delta AS nota_transposed
+  , f.ticks
+  FROM subjects_and_deltas s
+  , unnest(s.rhythm, s.deltas)
+    WITH ORDINALITY AS f(ticks, delta, ord)
+), patterns AS (
+  SELECT src
+  , pattern_id
+  , array_agg(nota_transposed ORDER BY ord) AS pattern_note
+  , array_agg(ticks           ORDER BY ord) AS pattern_rhythm
+  FROM patterns_unnested
+  GROUP BY src, pattern_id
 ), occurrences_unnested AS (
   SELECT n.id
   , n.src
@@ -236,14 +253,12 @@ WITH RECURSIVE patterns AS (
   , 1 AS length
   , n.start
   , n.id AS first
-  , p.ids[1]  AS pattern_start
-  , p.note    AS pattern_note
-  , p.offsets AS pattern_offsets
-  , array_length(p.offsets,1) AS max_iter
+  , p.pattern_id
+  , p.pattern_note
+  , array_length(p.pattern_note,1) AS max_iter
   FROM pgwtc.notes n
   JOIN patterns p USING (src)
-  WHERE n.nota == p.note[1]
-                + p.offsets[1]
+  WHERE (n.nota).tono IS NOT DISTINCT FROM (p.pattern_note[1]).tono
 UNION ALL
   SELECT n.id
   , n.src
@@ -254,40 +269,39 @@ UNION ALL
   , a.length + 1 AS length
   , a.start
   , a.first
-  , a.pattern_start
+  , a.pattern_id
   , a.pattern_note
-  , a.pattern_offsets
   , a.max_iter
   FROM occurrences_unnested a
   JOIN pgwtc.notes n USING (src, vox)
   WHERE n.ord = a.ord + 1
-  AND n.nota == a.pattern_note[a.length + 1]
-              + a.pattern_offsets[1]
+  AND (n.nota).tono IS NOT DISTINCT FROM (a.pattern_note[a.length + 1]).tono
   AND length < max_iter
 ), occurrences AS (
   SELECT src
   , vox
   , start
-  , pattern_start
-  , pattern_offsets
+  , pattern_id
   , array_agg(id    ORDER BY ord) AS ids
   , array_agg(nota  ORDER BY ord) AS note
   , array_agg(ticks ORDER BY ord) AS rhythm
   FROM occurrences_unnested
-  GROUP BY src, vox, start, pattern_start, pattern_offsets
+  GROUP BY src, vox, start, pattern_id
 )
 SELECT src
 , o.vox
 , o.start
 , o.ids
 , o.rhythm
-, p.rhythm AS pattern_rhythm
+, pattern_id
+, pattern_rhythm
 FROM occurrences o
-JOIN patterns p USING (src)
-WHERE array_length(o.ids,1) > greatest(3, 0.5 * array_length(p.ids,1))
-  AND p.ids[1]  = o.pattern_start
-  AND p.offsets = o.pattern_offsets
+JOIN patterns p USING (src, pattern_id)
+WHERE array_length(o.ids,1) > greatest(3, 0.5 * array_length(pattern_note,1))
 ORDER BY src, o.start;
+
+CREATE INDEX ON notes(src);
+CREATE INDEX ON notes(nota);
 
 --
 -- 4. Functions creating lilypond-book sources
@@ -366,7 +380,9 @@ CREATE VIEW subject_occurrences_pretty AS
 SELECT src
 , o.vox
 , o.start @ m.tempo AS initio
+, o.pattern_id
 , lilypond_voice(src, o.vox, o.ids[1], array_length(o.ids,1))
+, o.pattern_rhythm
 FROM subject_occurrences o
 JOIN metadata m USING (src)
 ORDER BY src, o.start;
