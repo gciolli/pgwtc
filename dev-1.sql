@@ -5,5 +5,6 @@ DROP EXTENSION IF EXISTS ly2pg CASCADE;
 CREATE EXTENSION pgwtc CASCADE;
 --SET search_path = pgwtc, ly2pg, public;
 
-SELECT *
-FROM pgwtc.subject_occurrences_pretty;
+SELECT src, count(*)
+FROM pgwtc.subject_occurrences
+GROUP BY ROLLUP (src);
