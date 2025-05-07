@@ -1,4 +1,4 @@
-TARGET=pgwtc-subjects.lb.pdf
+TARGET=pgwtc-subjects.lb.pdf notes.lb.pdf
 
 target: $(TARGET)
 

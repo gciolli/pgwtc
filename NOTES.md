@@ -1,11 +1,91 @@
+# 2025-05-07
+
+Mugellini reports the following subject entries:
+
+| BWV | Subject entries                                  | ?   |
+|-----|--------------------------------------------------|-----|
+| 853 | 3 8 12 19 20 24 24 27 27 -30 -36 -39 -44 -45 -47 |     |
+|     | 52 52 -54 -54 57 61 62 -64 67 67 72 77 77 77 80  |     |
+| 855 | 1 3 11 13 20 22 30 32 39                         | OK* |
+| 857 | 1 4 7 13 19 27 34 40 47 53                       | OK  |
+| 858 | 1 3 5 11 15 20 28 31                             | OK* |
+| 859 | 1 4 8 15 -20 25 29 -32 37                        | OK* |
+| 861 | 1 2 5 6 12 13 15 17 17 20 21 23 28 28 29 31 33   |     |
+
+## BWV853
+
+- we find 1, 3, 8, 12, 19 and 20 only, because the subject is modified
+  starting from 20 onwards.
+
+## BWV855
+
+- it finds all entries except 39, because it is truncated
+
+## BWV858
+
+-   it misses the entry at 11, because it is slightly simplified as
+	
+	```
+	[cis8] cis fis eis fis eis16 dis cis4 dis4
+	```
+
+    while the original subject is:
+	
+	```
+	[ r8 ] cis fis eis fis eis16 dis cis8. b32 cis dis4
+	```
+
+## BWV859
+
+-   it misses the inverse entries (as expected), and the entry at 25,
+    because the start is slightly altered to
+	
+	```
+	[b8 gis a] cis fis dis e2. ~ e4 dis8 eis8 fis4 ~ fis4 ...
+	```
+
+	from the original of
+
+	```
+	[r4] fis gis a2. ~ a4 gis8 ais b4 ~ b4 ...
+	```
+
+### BWV861
+
+-   We are missing four: 13 (bass), one of the two 17 (alto), the 23
+    (alto), the 29 (bass)
+
+-   13 is missed because the starting note is lowered by one tone:
+
+	```
+	r8 bes d f e4 f r8 g16 a bes8 a16 g a4
+	```
+	
+-   17 is missed because the part after the rest is lowered by one
+    tone:
+	
+	```
+	r8 c d f, ees4 f r8 f16 g aes8 g16 f g8
+	```
+
+-   23 is missed because the (1) start is modified and (2) the rest is
+    suppressed, as follows:
+
+	```
+	[g8] c16 d ees8 g, fis4 g4. a16 bes c8 bes16 a bes
+	```
+
+-   29 is missed because it is modified as follows:
+
+	```
+	r8 d ees g, fis4 a d8, d16' c bes8 c16 d ees2
+	```
+
 # 2025-05-04
 
 ## Notes on BWV853
 
 Mugellini reports the following subject entries: 
-
-3, 8, 12, 19, 20, 24, 24, 27, 27, -30, -36, -39, -44, -45, -47, 52,
-52, -54, -54, 57, 61, 62, -64, 67, 67, 72, 77, 77, 77, 80.
 
 # 2025-05-03
 

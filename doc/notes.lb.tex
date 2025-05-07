@@ -1,0 +1,63 @@
+\documentclass[a4paper]{article}
+\title{Musical notes}
+\begin{document}
+
+\begin{lilypond}
+  \score {
+    <<
+    \new Voice = "note" {
+      \relative c' {
+        \partial 4 b4 c4 d e f g a b c d e f g a b c d e
+      }
+    }
+    \new Lyrics \lyricsto "note" {
+      "..." C D E F G A B C D E F G A B C D "..."
+    }
+    >>
+  }
+\end{lilypond}
+
+\begin{lilypond}
+  \relative c' {
+    c1 r d2 r e4 r f8 r g16 a r r b32 c r d
+  }
+\end{lilypond}
+
+\vskip 3cm
+
+\begin{lilypond}
+  \relative c {
+    \key cis \minor \clef bass \time 2/2 \stemDown
+    cis1 bis2 e dis1 cis4
+  }
+\end{lilypond}
+
+\begin{lilypond}
+  \relative c {
+    \key cis \minor \clef bass \time 2/2 \stemUp
+    gis'1 fisis2 b ais1 gis2
+  }
+\end{lilypond}
+
+\begin{lilypond}
+  \relative c {
+    \key cis \minor \clef treble \time 2/2 \stemUp
+    r2 cis' bis e dis1 cis2
+  }
+\end{lilypond}
+
+\begin{lilypond}
+  \relative c' {
+    \key c \major \clef treble \time 4/4 \stemDown
+    r8 c d e f8. g32 f e8 a d, g ~ g16 a g f e f
+  }
+\end{lilypond}
+
+\begin{lilypond}
+  \relative c'' {
+    \key c \major \clef treble \time 4/4 \stemUp
+    \partial 2 r8 g a b c8. d32 c b8 e a, d ~ d16 e d c
+  }
+\end{lilypond}
+
+\end{document}
