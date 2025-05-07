@@ -116,11 +116,10 @@ BEGIN
      AND COALESCE(n.ord < v_start_ord + max_count, true)
   ), notes_with_durations AS (
     SELECT ord
-    , string_agg(lilypond(nota, f.d), ' ~ ' ORDER BY f.i) AS lilypond
+    , nota ## durations AS lilypond
     FROM ids
     JOIN pgwtc.notes n USING (id, ord)
-    CROSS JOIN LATERAL unnest(n.durations) WITH ORDINALITY AS f(d, i)
-    GROUP BY ord
+    GROUP BY ord, nota, durations
   )
   SELECT string_agg(lilypond, ' ' ORDER BY ord)
   INTO v_notes
@@ -141,6 +140,75 @@ BEGIN
     ELSE '' END
   , v_notes
   );
+END;
+$BODY$;
+
+CREATE FUNCTION needs_tonal_shift
+( v_clavis      IN clavis
+, v_note        IN nota[]
+, transposed_by IN int
+, pos   OUT int
+, shift OUT int
+) LANGUAGE plpgsql
+SET search_path = pgwtc, ly2pg, public
+AS $BODY$
+BEGIN
+--  --
+--  -- (1) first note is dominant, transposing by a fifth
+--  --
+--  IF (transposed_by + 35) % 7 = 4
+--  AND v_note[1] @ v_clavis = 4
+--  THEN
+--    pos := 1;
+--    shift := -1;
+--  END IF;
+
+  --
+  -- (2) when transposing by a fifth, locate the first dominant note,
+  -- up to the first 6 notes.
+  --
+
+  IF (transposed_by + 35) % 7 = 4
+  THEN
+    pos := 1;
+    WHILE pos <= 2
+    LOOP
+      EXIT WHEN v_note[pos] @ v_clavis = 4;
+      pos := pos + 1;
+    END LOOP;
+    IF pos <= 2 THEN
+      shift := -1;
+    ELSE
+      pos := NULL;
+    END IF;
+  END IF;
+
+  --(delta + 35) % 7 = 4 -- transposed by a fifth
+  --    AND
+  --      (
+  --        ( -- starting with dominant
+  --          note[1] @ clavis = 4 )
+  --      OR
+  --        ( -- the second note being the first dominant
+  --          note[1] @ clavis != 4 AND
+  --          note[2] @ clavis  = 4
+  --        )
+  --      )
+
+  IF pos IS NOT NULL THEN
+    RAISE DEBUG E'CP1000: '
+    '\n  %'
+    '\n  %'
+    '\n  %'
+    ' ==> %,%'
+    , v_clavis
+    , v_note
+    , transposed_by
+    , pos
+    , shift;
+  END IF;
+
+  RETURN;
 END;
 $BODY$;
 
@@ -210,7 +278,7 @@ JOIN pgwtc.metadata USING (src)
 JOIN first_notes USING (src, vox)
 ORDER BY src, vox;
 
-CREATE VIEW subject_occurrences AS
+CREATE VIEW subject_patterns AS
 WITH RECURSIVE subjects_and_deltas_real AS (
 
   --
@@ -231,38 +299,36 @@ WITH RECURSIVE subjects_and_deltas_real AS (
   , array_fill(f.o, ARRAY[array_length(note,1)]) AS deltas
   FROM pgwtc.subjects s
   , generate_series(-35,35) AS f(o)
-), subjects_and_deltas_tonal AS (
 
   --
-  -- In this query we generate all the possible "tonal adjustments",
-  -- by transposing a prominent note by one grade to the tonic, when
-  -- possible.
+  -- In the following CTE we generate all the possible "tonal
+  -- adjustments".
   --
-  -- The pattern id "Tx/y" means that pattern Ry was tonally adjusted
-  -- by moving the x-th note, e.g. T1/-4 is the same as R-4 with the
-  -- first note tonally adjusted.
+  -- The pattern id "Dx/y" means that the x-th note is the first
+  -- dominant, and that we applied the tonal adjustment after
+  -- transposing by y.
   --
-  -- Here we transpose a prominent dominant note when the tonal answer
-  -- is the subject transposed by a fifth.
+
+), subjects_and_deltas_tonal_dominant AS (
+  -- Here we transpose the first dominant note to apply tonal
+  -- adjustment.
 
   SELECT src
   , note
   , rhythm
   , clavis
-  , format('T1/%s', delta) AS pattern_id
+  , format('D%s/%s', pos, delta) AS pattern_id
   , delta
-  , int_array_shift(deltas, 1, -1)
+  , int_array_shift(deltas, ts.pos, ts.shift)
   FROM subjects_and_deltas_real
-  WHERE (delta + 35) % 7 = 4 -- transposed by a fifth
-    AND note[1] @ clavis = 4 -- starting with the dominant
-    AND false
-  -- TODO: perhaps filter by metadata
+  , needs_tonal_shift(clavis, note, delta) AS ts(pos, shift)
+  WHERE ts.pos IS NOT NULL
 ), subjects_and_deltas AS (
   SELECT *
   FROM subjects_and_deltas_real
   UNION ALL
   SELECT *
-  FROM subjects_and_deltas_tonal
+  FROM subjects_and_deltas_tonal_dominant
 ), patterns_unnested AS (
   SELECT s.src
   , s.pattern_id
@@ -279,7 +345,12 @@ WITH RECURSIVE subjects_and_deltas_real AS (
   , array_agg(ticks           ORDER BY ord) AS pattern_rhythm
   FROM patterns_unnested
   GROUP BY src, pattern_id
-), occurrences_unnested AS (
+)
+SELECT *
+FROM patterns;
+
+CREATE VIEW subject_occurrences AS
+WITH RECURSIVE occurrences_unnested AS (
   SELECT n.id
   , n.src
   , n.vox
@@ -293,7 +364,7 @@ WITH RECURSIVE subjects_and_deltas_real AS (
   , p.pattern_note
   , array_length(p.pattern_note,1) AS max_iter
   FROM pgwtc.notes n
-  JOIN patterns p USING (src)
+  JOIN subject_patterns p USING (src)
   WHERE (n.nota).tono IS NOT DISTINCT FROM (p.pattern_note[1]).tono
 UNION ALL
   SELECT n.id
@@ -332,7 +403,7 @@ SELECT src
 , pattern_id
 , pattern_rhythm
 FROM occurrences o
-JOIN patterns p USING (src, pattern_id)
+JOIN subject_patterns p USING (src, pattern_id)
 WHERE array_length(o.ids,1) > greatest(3, 0.5 * array_length(pattern_note,1))
 ORDER BY src, o.start;
 
@@ -398,7 +469,8 @@ SELECT id
 , src
 , vox
 , ord
-, lilypond(nota)
+, # nota AS lilypond
+, nota ## durations AS lilypond_full
 , start @ tempo AS initio
 , durations
 FROM notes
@@ -411,6 +483,13 @@ SELECT src
 , clavis
 , lilypond_voice(src, vox, ids[1], array_length(ids, 1))
 FROM subjects;
+
+--CREATE VIEW subject_patterns_pretty AS
+--SELECT src
+--, pattern_id
+--, lilypond(pattern_note)
+--, pattern_rhythm
+--FROM subject_patterns;
 
 CREATE VIEW subject_occurrences_pretty AS
 SELECT src

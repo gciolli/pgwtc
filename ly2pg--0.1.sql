@@ -62,7 +62,7 @@ $BODY$;
 -- 2. Base tables and types
 --
 
-CREATE TYPE vox AS ENUM ('soprano', 'alto', 'mezzo', 'tenor', 'bass');
+CREATE TYPE vox AS ENUM ('bass', 'tenor', 'mezzo', 'alto', 'soprano');
 
 CREATE TABLE tokenized_all
 ( id serial PRIMARY KEY
@@ -235,7 +235,7 @@ SELECT ROW
 ) :: lilypond_note
 $$;
 
-CREATE FUNCTION lilypond(nota, ext text DEFAULT '')
+CREATE FUNCTION lilypond(nota, text)
 RETURNS text
 LANGUAGE SQL AS
 $$
@@ -274,15 +274,39 @@ format('%s%s%s%s'
 ) END
 $$;
 
-CREATE FUNCTION lilypond(nota[], ext text[] DEFAULT ARRAY[''])
+CREATE FUNCTION lilypond(nota)
+RETURNS text
+LANGUAGE SQL AS $$SELECT lilypond($1,'')$$;
+
+CREATE OPERATOR #
+( FUNCTION = lilypond
+, RIGHTARG = nota
+);
+
+--?CREATE FUNCTION lilypond(nota[], ext text[] DEFAULT ARRAY[''])
+--?RETURNS text
+--?LANGUAGE SQL
+--?SET search_path = ly2pg
+--?AS $$
+--?SELECT string_agg(lilypond(ROW(tono, alt) :: nota) || e, ' ')
+--?FROM unnest($1) AS f(tono, alt)
+--?, unnest($2) AS g(e)
+--?$$;
+
+CREATE FUNCTION lilypond(nota, text[])
 RETURNS text
 LANGUAGE SQL
 SET search_path = ly2pg
 AS $$
-SELECT string_agg(lilypond(ROW(tono, alt) :: nota) || e, ' ')
-FROM unnest($1) AS f(tono, alt)
-, unnest($2) AS g(e)
+SELECT string_agg(lilypond($1, f.d), ' ~ ' ORDER BY f.i)
+FROM unnest($2) WITH ORDINALITY AS f(d,i)
 $$;
+
+CREATE OPERATOR ##
+( FUNCTION = lilypond
+, LEFTARG = nota
+, RIGHTARG = text[]
+);
 
 CREATE FUNCTION duration2ticks(text)
 RETURNS int
