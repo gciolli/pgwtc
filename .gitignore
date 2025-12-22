@@ -8,3 +8,6 @@ ly/voces/*.ly
 
 cache/*
 doc/cache/*
+
+ly2scm/cache
+!ly2scm/cache/.placeholder
