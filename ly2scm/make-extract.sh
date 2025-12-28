@@ -12,30 +12,20 @@ cat ${pf}00 >$of
 rm -f ${pf}??
 
 cat >>$of <<EOF
-
-#(display "(define voces '(")
-#(newline)
-
-{
+#(display "#hash(")
 EOF
 
 for y in $(sed -nf make-extract.sed $if); do
     sf=cache/${x}-${y}.scm
     cat >>$of <<EOF
-
-  #(display "('${y} . ")
   #(newline)
+  #(newline)
+  #(display "(${y} . ")
   \\displayMusic \\${y}
   #(display ")")
-  #(newline)
-
 EOF
 done
 
 cat >>$of <<EOF
-}
-
-#(display "))")
-#(newline)
-
+#(display ")")
 EOF
