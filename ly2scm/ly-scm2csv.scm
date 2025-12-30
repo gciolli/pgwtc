@@ -313,7 +313,7 @@
     (with-output-to-file o-f
       (lambda ()
         (let loop
-            ((voces (hash->list (load i-f)))
+            ((voces (load i-f))
              (csv (list (event->csv #f))))
           (if (null? voces)
               (display-lines csv)

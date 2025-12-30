@@ -12,11 +12,10 @@ cat ${pf}00 >$of
 rm -f ${pf}??
 
 cat >>$of <<EOF
-#(display "#hash(")
+#(display "'(")
 EOF
 
 for y in $(sed -nf make-extract.sed $if); do
-    sf=cache/${x}-${y}.scm
     cat >>$of <<EOF
   #(newline)
   #(newline)
