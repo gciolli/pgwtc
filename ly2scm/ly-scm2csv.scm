@@ -22,169 +22,306 @@
 (define warn (msg #f "WARNING"))
 (define err  (msg #t "ERROR"  ))
 
-; uncomment to disable debug
-(define deb (lambda xs #f))
+; uncomment to disable debug and warning messages
+;(define deb (lambda xs #f))
+;(define warn (lambda xs #f))
 
-(define (parse-lilypond-event e)
-  (deb 100 e)
-  (match e
-    [`(make-music
-       (quote BarCheck))
-     (deb 110)
-     (cons 'BarCheck (vector))]
-
-    ;;
-    ;; Rests
-    ;;
-
-    [`(make-music
-       (quote RestEvent)
-       (quote duration)
-       (ly:make-duration ,d))
-     (deb 120)
-     (cons 'RestEvent (vector d))]
-
-    [`(make-music
-       (quote MultiMeasureRestMusic)
-       (quote duration)
-       (ly:make-duration ,n ,d)
-       (quote articulations)
-       (quote ,a))
-     (deb 125)
-     (cons 'MultiMeasureRestMusic (vector n d))]
-
-    ;;
-    ;; various forms of NoteEvent
-    ;;
-
-    [`(make-music
-       (quote NoteEvent)
-       (quote duration)
-       (ly:make-duration . ,d)
-       (quote pitch)
-       (ly:make-pitch . ,p))
-     (deb 130)
-     (cons 'NoteEvent (vector d p #f))]
-
-    [`(make-music
-       (quote NoteEvent)
-       (quote pitch)
-       (ly:make-pitch . ,p)
-       (quote duration)
-       (ly:make-duration . ,d))
-     (deb 131)
-     (cons 'NoteEvent (vector d p #f))]
-
-    [`(make-music
-       (quote NoteEvent)
-       (quote force-accidental) ,_
-       (quote duration)
-       (ly:make-duration . ,d)
-       (quote pitch)
-       (ly:make-pitch . ,p))
-     (deb 132)
-     (cons 'NoteEvent (vector d p #f))]
-
-    [`(make-music
-       (quote NoteEvent)
-       (quote articulations) ,a
-       (quote duration)
-       (ly:make-duration . ,d)
-       (quote pitch)
-       (ly:make-pitch . ,p))
-     (deb 133)
-     (cons 'NoteEvent (vector d p a))]
-
-    [`(make-music
-       (quote NoteEvent)
-       (quote articulations) ,a
-       (quote force-accidental) ,_
-       (quote duration)
-       (ly:make-duration . ,d)
-       (quote pitch)
-       (ly:make-pitch . ,p))
-     (deb 134)
-     (cons 'NoteEvent (vector d p a))]
-
-    ;;
-    ;; unsupported forms
-    ;;
-
-    [_
-     (deb 140)
-     (cons 'unsupported (vector e))]))
-
-(define (vox->events es)
-  (let-values (((metadata notes)
-		(match es
-		  [`(make-music
-		     (quote RelativeOctaveMusic)
-		     (quote element)
-		     (make-music
-		      (quote SequentialMusic)
-		      (quote elements)
-		      (list ,metadata . ,notes)))
-		   (values metadata notes)]
-		  ;;[_ #f]
-		  )))
-    (let loop ((l notes)
-	       (a '()))
-      (deb 200 (length l))
-      (if (null? l)
-	  (reverse a)
-	  (loop (cdr l)
-		(cons (parse-lilypond-event (car l))
-		      a))))))
+;;
+;; Main code
+;;
 
 (define (csv . xs)
   (let loop ((l xs)
-	     (a #f))
+             (a #f))
     (if (null? l)
-	a
-	(loop
-	 (cdr l)
-	 (format "~a~a"
-		 (if a (format "~a," a) "")
-		 (or (car l) ""))))))
+        a
+        (loop
+         (cdr l)
+         (format "~a~a"
+                 (if a (format "~a," a) "")
+                 (or (car l) ""))))))
+
+(define (music-add-missing t e)
+  ;; This function sanitizes "e" by ensuring that it has exactly the
+  ;; expected tags. First it checks that the existing tags are among
+  ;; those that are allowed, and then it sets each allowed tag which
+  ;; is not there already to an #f value.
+  (let ((valid-tags
+         (case t
+
+           [(MultiMeasureRestMusic)
+            '(articulations
+              duration)]
+
+           [(ContextSpeccedMusic)
+            '(context-type
+              element)]
+
+           [(SimultaneousMusic)
+            '(elements)]
+
+           [(TimeScaledMusic)
+            '(denominator
+              numerator
+              duration
+              element)]
+
+           [(LineBreakEvent)
+            '(break-permission)]
+
+           [(AdHocMarkEvent)
+            '(text)]
+
+           [(EventChord)
+            '(line-break-permission
+              page-break-permission
+              page-marker
+              elements)]
+
+           [(GraceMusic)
+            '(element)]
+
+           [(NoteEvent)
+            '(force-accidental
+              articulations
+              cautionary
+              duration
+              pitch)]
+
+           [(RestEvent
+             SkipEvent)
+            '(duration)]
+
+           [(BarEvent)
+            '(bar-type)]
+
+           [(BarCheck)
+            '()]
+
+           [else
+            (err 602 "unsupported tag " t)])))
+    (let loop ((l e))
+      (unless (null? l)
+        (if (member (caar l) valid-tags)
+            (loop (cdr l))
+            (err 606 "tag " t " does not support attribute " (caar l)))))
+    (let loop ((l valid-tags)
+               (a '()))
+      (cond
+       ((null? l)
+        a)
+       ((assoc (car l) e)
+        =>
+        (lambda (x)
+          (loop (cdr l)
+                (cons x a))))
+       (else
+        (loop (cdr l)
+              (cons (cons (car l) #f)
+                    a)))))))
+
+(define (music-canonical e)
+  ;; This function takes a list "e" of the following form:
+  ;;
+  ;;   (make-music T K1 V1 ... Kn Vn)
+  ;;
+  ;; where T is a valid tag, each Ki is a valid identifier for that
+  ;; tag, and returns the same content in a canonical form.
+  ;;
+  ;; The canonical form is optimised for the "match" procedure,
+  ;; meaning that (1) we return #f if the tag must be skipped, (2) we
+  ;; add the missing K entries with V set to #f, and (3) we sort the
+  ;; Ks.
+  (unless (equal? (car e) 'make-music)
+    (err 501 "event starts with " (car e) " instead of make-music"))
+  (let ((tag (cadadr e)))
+    (case tag
+
+      ;;
+      ;; We ignore some events
+      ;;
+
+      ((BarCheck
+        BarEvent
+        EventChord
+        LineBreakEvent)
+       #f)
+
+      ;; TODO: double check that we can actually ignore EventChord
+
+      (else
+       (let* ((e1
+               (let loop ((l (cddr e))
+                          (a '()))
+                 (if (null? l)
+                     a
+                     (loop (cddr l)
+                           (cons (cons (cadar l) (cadr l)) a)))))
+
+              (e2
+               (sort e1
+                     (lambda (x y)
+                       (string>? (symbol->string (car x))
+                                 (symbol->string (car y))))))
+
+              (e3
+               (music-add-missing tag e2))
+
+              (e4
+               (let loop ((l e3)
+                          (a '()))
+                 (if (null? l)
+                     a
+                     (loop (cdr l)
+                           (cons (list 'quote (caar l))
+                                 (cons (cdar l) a))))))
+
+              (e5
+               (cons (car e)
+                     (cons (cadr e) e4))))
+
+         e5)))))
+
+(define (parse-lilypond-event e0)
+  (let ((e (music-canonical e0)))
+    (if e
+        (match e
+
+               [`(make-music
+                  (quote SkipEvent)
+                  (quote duration)         (ly:make-duration ,d ...))
+                (cons 'SkipEvent (vector d))]
+
+               [`(make-music
+                  (quote RestEvent)
+                  (quote duration)         (ly:make-duration ,d ...))
+                (cons 'RestEvent (vector d))]
+
+               [`(make-music
+                  (quote MultiMeasureRestMusic)
+                  (quote articulations)    ,a
+                  (quote duration)         (ly:make-duration ,d ...))
+                (cons 'MultiMeasureRestMusic (vector d))]
+
+               [`(make-music
+                  (quote NoteEvent)
+                  (quote force-accidental) ,_
+                  (quote articulations)    ,a
+                  (quote cautionary)       ,c
+                  (quote duration)         (ly:make-duration ,d ...)
+                  (quote pitch)            (ly:make-pitch    ,p ...))
+                (cons 'NoteEvent (vector d p a c))]
+
+               ;;
+               ;; TODO forms
+               ;;
+
+               [`(make-music
+                  (quote ContextSpeccedMusic)
+                  (quote context-type) ,ct
+                  (quote element)      ,_)
+                (cons 'ContextSpeccedMusic (vector ct 'TODO))]
+
+               [`(make-music
+                  (quote SimultaneousMusic)
+                  (quote elements) ,_)
+                (cons 'SimultaneousMusic (vector 'TODO))]
+
+               [`(make-music
+                  (quote TimeScaledMusic)
+                  (quote denominator) ,n1
+                  (quote numerator)   ,n2
+                  (quote duration)    ,d
+                  (quote element)     ,_)
+                (cons 'TimeScaledMusic (vector d n1 n2 'TODO))]
+
+               [`(make-music
+                  (quote AdHocMarkEvent)
+                  (quote text)      ,t)
+                (cons 'AdHocMarkEvent (vector t 'TODO))]
+
+               [`(make-music
+                  (quote GraceMusic)
+                  (quote element)      ,_)
+                (cons 'GraceMusic (vector 'TODO))]
+
+               ;;
+               ;; unsupported forms
+               ;;
+
+               [_
+                (err 140 "unsupported event form " e)
+                (cons 'unsupported (vector e))]
+               )
+        #f)))
+
+(define (vox->events es)
+  (let-values (((metadata notes)
+                (match es
+                  [`(make-music
+                     (quote RelativeOctaveMusic)
+                     (quote element)
+                     (make-music
+                      (quote SequentialMusic)
+                      (quote elements)
+                      (list ,metadata . ,notes)))
+                   (values metadata notes)]
+                  )))
+    (let loop ((l notes)
+               (a '()))
+      (if (null? l)
+          (reverse a)
+          (loop (cdr l)
+                (let ((e (parse-lilypond-event (car l))))
+                  (if e (cons e a) a)))))))
 
 (define (event->csv vox)
   (if vox
-      (lambda (e)
-	(let ((v (cdr e)))
-	  (case (car e)
-	    [(RestEvent)
-	     (csv vox (car e) (vector-ref v 0) #f #f #f)]
-	    [(MultiMeasureRestMusic)
-	     (csv vox (car e) (vector-ref v 1) (vector-ref v 0) #f #f)]
-	    [(NoteEvent)
-	     (let ((articulation
-		    (case (vector-ref v 2)
-		      ['(list (make-music (quote TieEvent)))
-		       'tie]
-		      [else #f])))
-	       (csv vox (car e) (vector-ref v 0) #f (vector-ref v 1) articulation))]
-	    [(BarCheck)
-	     (csv vox (car e) #f #f #f #f)]
-	    [else
-	     (warn 410 e)
-	     #f])))
+      (lambda (e0)
+        (let* ((e e0)
+               (v (cdr e)))
+          (case (car e)
+
+            [(RestEvent SkipEvent)
+             (csv vox (car e) (vector-ref v 0) #f #f #f)]
+
+            [(MultiMeasureRestMusic)
+             (csv vox (car e) (vector-ref v 0) #f #f #f)]
+
+            [(NoteEvent)
+             (let ((articulation ;; TODO maybe use?
+                    (case (vector-ref v 2)
+                      ['(list (make-music (quote TieEvent)))
+                       'tie]
+                      [else #f])))
+               (csv vox (car e) (vector-ref v 0) (vector-ref v 1) (vector-ref v 2) #f))]
+
+            [(BarCheck)
+             (csv vox (car e) #f #f #f #f)]
+
+            [(ContextSpeccedMusic SimultaneousMusic TimeScaledMusic AdHocMarkEvent GraceMusic)
+             (csv vox (car e) #f #f #f 'TODO)]
+
+            [else
+             (err 410 "unsupported event type " e)
+             #f])))
       "vox,event_type,duration,multi,pitch,articulation"))
 
 (define (parse-ly x)
   (let ((i-f (format "cache/~a.scm" x))
-	(o-f (format "cache/~a.csv" x)))
+        (o-f (format "cache/~a.csv" x)))
     (with-output-to-file o-f
       (lambda ()
-	(let loop
-	    ((voces (hash->list (load i-f)))
-	     (csv (list (event->csv #f))))
-	  (if (null? voces)
-	      (display-lines csv)
-	      (loop (cdr voces)
-		    (append csv
-			    (map (event->csv (caar voces))
-				 (vox->events
-				  (cdar voces))))))))
+        (let loop
+            ((voces (hash->list (load i-f)))
+             (csv (list (event->csv #f))))
+          (if (null? voces)
+              (display-lines csv)
+              (loop (cdr voces)
+                    (append csv
+                            (map (event->csv (caar voces))
+                                 (vox->events
+                                  (cdar voces))))))))
       #:exists 'replace)))
 
 (define (main argv)
