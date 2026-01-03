@@ -289,12 +289,12 @@
              (csv vox (car e) (vector-ref v 0) #f #f #f)]
 
             [(NoteEvent)
-             (let ((articulation ;; TODO maybe use?
+             (let ((articulation
                     (case (vector-ref v 2)
                       ['(list (make-music (quote TieEvent)))
                        'tie]
-                      [else #f])))
-               (csv vox (car e) (vector-ref v 0) (vector-ref v 1) (vector-ref v 2) #f))]
+                      [else (vector-ref v 2)])))
+               (csv vox (car e) (vector-ref v 0) (vector-ref v 1) articulation #f))]
 
             [(BarCheck)
              (csv vox (car e) #f #f #f #f)]
@@ -305,7 +305,7 @@
             [else
              (err 410 "unsupported event type " e)
              #f])))
-      "vox,event_type,duration,multi,pitch,articulation"))
+      "vox,event_type,duration,pitch,articulation,notes"))
 
 (define (parse-ly x)
   (let ((i-f (format "cache/~a.scm" x))
