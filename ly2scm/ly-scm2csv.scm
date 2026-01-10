@@ -76,6 +76,7 @@
             '(line-break-permission
               page-break-permission
               page-marker
+              duration
               elements)]
 
            [(GraceMusic)
@@ -143,11 +144,8 @@
 
       ((BarCheck
         BarEvent
-        EventChord
         LineBreakEvent)
        #f)
-
-      ;; TODO: double check that we can actually ignore EventChord
 
       (else
        (let* ((e1
@@ -228,6 +226,15 @@
                 (cons 'SimultaneousMusic (vector 'TODO))]
 
                [`(make-music
+                  (quote EventChord)
+                  (quote line-break-permission) ,_
+                  (quote page-break-permission) ,_
+                  (quote page-marker) ,_
+                  (quote duration) ,d
+                  (quote elements) ,e)
+                (cons 'EventChord (vector d e 'TODO))]
+
+               [`(make-music
                   (quote TimeScaledMusic)
                   (quote denominator) ,n1
                   (quote numerator)   ,n2
@@ -275,37 +282,48 @@
                 (let ((e (parse-lilypond-event (car l))))
                   (if e (cons e a) a)))))))
 
-(define (event->csv vox)
+(define (event->csv carmen vox)
   (if vox
-      (lambda (e0)
-        (let* ((e e0)
-               (v (cdr e)))
+      (lambda (e)
+        (let* ((v (cdr e))
+	       (f (lambda (a b c d)
+		    (csv carmen vox (car e) a b c d))))
           (case (car e)
 
             [(RestEvent SkipEvent)
-             (csv vox (car e) (vector-ref v 0) #f #f #f)]
+	     (f (vector-ref v 0) #f #f #f)]
 
             [(MultiMeasureRestMusic)
-             (csv vox (car e) (vector-ref v 0) #f #f #f)]
+             (f (vector-ref v 0) #f #f #f)]
 
             [(NoteEvent)
              (let ((articulation
-                    (case (vector-ref v 2)
-                      ['(list (make-music (quote TieEvent)))
-                       'tie]
-                      [else (vector-ref v 2)])))
-               (csv vox (car e) (vector-ref v 0) (vector-ref v 1) articulation #f))]
+		    (match (vector-ref v 2)
+			   [`(list
+			      (make-music
+			       (quote TieEvent)))
+			    'tie]
+			   [`(list
+			      (make-music
+			       (quote ArticulationEvent)
+			       (quote articulation-type)
+			       (quote ,a)))
+			    'articulation]
+			   [else
+			    (vector-ref v 2)])))
+               (f (vector-ref v 0) (vector-ref v 1) articulation #f))]
 
             [(BarCheck)
-             (csv vox (car e) #f #f #f #f)]
+             (f #f #f #f #f)]
 
-            [(ContextSpeccedMusic SimultaneousMusic TimeScaledMusic AdHocMarkEvent GraceMusic)
-             (csv vox (car e) #f #f #f 'TODO)]
+            [(ContextSpeccedMusic SimultaneousMusic TimeScaledMusic
+              AdHocMarkEvent GraceMusic ChordEvent)
+             (f #f #f #f 'TODO)]
 
             [else
              (err 410 "unsupported event type " e)
              #f])))
-      "vox,event_type,duration,pitch,articulation,notes"))
+      "carmen,vox,event_type,duration,pitch,articulation,notes"))
 
 (define (parse-ly x)
   (let ((i-f (format "cache/~a.scm" x))
@@ -314,12 +332,12 @@
       (lambda ()
         (let loop
             ((voces (load i-f))
-             (csv (list (event->csv #f))))
+             (csv (list (event->csv #f #f))))
           (if (null? voces)
               (display-lines csv)
               (loop (cdr voces)
                     (append csv
-                            (map (event->csv (caar voces))
+                            (map (event->csv x (caar voces))
                                  (vox->events
                                   (cdar voces))))))))
       #:exists 'replace)))
